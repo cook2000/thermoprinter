@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f3efe6">
+<title>Katzendrucker</title>
+<style>
+/* VOICE: freundlich, werkstattartig, kein Schnickschnack
+   IDEA: ein Kassenbon – die Vorschau ist ein Papierstreifen
+   PICTURE: der Bon mit dem gerasterten Bild, groß oben
+   COLOUR: Papier-Weiß, Graphit, ein orangefarbener Akzent
+   TYPE: Inter für alles, Zahlen tabellarisch */
+:root{color-scheme:light dark;--bg:light-dark(#f3efe6,#16140f);--card:light-dark(#fff,#221f19);--ink:light-dark(#1b1915,#efe9dc);--mute:light-dark(#6b655a,#a59d8e);--line:light-dark(#ddd6c8,#3a352c);--acc:#e8622c;--ok:#2e8b57;--err:#c8371e}
+:root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
+*{box-sizing:border-box;min-width:0}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow-x:clip}
+header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:14px max(4vw,14px);border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:5}
+h1{font-size:22px;margin:0;flex:1}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--mute);display:inline-block;margin-right:6px}
+.dot.on{background:var(--ok)}
+#status{font-size:14px;color:var(--mute)}
+button,select,input[type=text],textarea{font:inherit;font-size:16px}
+button{min-height:44px;padding:0 16px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink);cursor:pointer}
+button.pri{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600}
+button:disabled{opacity:.45;cursor:default}
+button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+main{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,420px);gap:24px;padding:20px max(4vw,14px);max-width:1100px;margin:auto}
+@media(max-width:760px){main{grid-template-columns:minmax(0,1fr)}}
+.paper{background:#fff;padding:14px 0 26px;border-radius:4px;box-shadow:0 1px 0 #0001,0 10px 30px #0002;max-width:384px;margin:0 auto;
+  -webkit-mask:radial-gradient(circle 7px at 7px 100%,#0000 98%,#000) -7px 0/14px 100% repeat-x}
+#preview{display:block;width:100%;image-rendering:pixelated;background:#fff}
+.empty{color:#888;text-align:center;padding:60px 20px;font-size:15px}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;display:grid;gap:14px;align-content:start}
+.tabs{display:flex;gap:6px}
+.tabs button{flex:1}
+.tabs button[aria-selected=true]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+label{display:grid;gap:4px;font-size:14px;color:var(--mute)}
+label span{display:flex;justify-content:space-between}
+label b{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;accent-color:var(--acc);height:28px}
+select,input[type=text],textarea{width:100%;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+textarea{min-height:110px;resize:vertical}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.row>*{flex:1}
+.chk{display:flex;align-items:center;gap:8px;color:var(--ink);font-size:15px}
+.chk input{width:20px;height:20px;accent-color:var(--acc)}
+.drop{border:2px dashed var(--line);border-radius:12px;padding:18px;text-align:center;cursor:pointer;color:var(--mute)}
+.drop.over{border-color:var(--acc);color:var(--ink)}
+progress{width:100%;height:10px;accent-color:var(--acc)}
+details{font-size:14px}
+summary{cursor:pointer;min-height:32px;color:var(--mute)}
+#log{font:12px/1.4 ui-monospace,Menlo,monospace;background:var(--bg);border-radius:8px;padding:8px;max-height:160px;overflow:auto;white-space:pre-wrap;color:var(--mute)}
+.warn{background:#e8622c22;border:1px solid var(--acc);border-radius:10px;padding:10px 12px;font-size:14px}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<header>
+  <h1>Katzendrucker</h1>
+  <span id="status"><span class="dot" id="dot"></span>nicht verbunden</span>
+  <button id="btnConnect" class="pri">Drucker verbinden</button>
+</header>
+<main>
+  <section>
+    <div class="paper"><canvas id="preview" width="384" height="1"></canvas><div class="empty" id="empty">Bild wählen oder Text eingeben –<br>hier erscheint die Druckvorschau.</div></div>
+  </section>
+  <section class="panel">
+    <div class="warn" id="noBt" hidden>Dieser Browser kann kein Web-Bluetooth. Nimm Chrome oder Edge (Android, Windows, macOS, ChromeOS). Auf dem iPhone geht es mit der App „Bluefy“.</div>
+    <div class="tabs" role="tablist">
+      <button role="tab" aria-selected="true" data-tab="img">Bild</button>
+      <button role="tab" aria-selected="false" data-tab="txt">Text</button>
+    </div>
+    <div id="tab-img">
+      <input type="file" id="file" accept="image/*" hidden>
+      <div class="drop" id="drop" tabindex="0">Bild antippen zum Auswählen<br><small>oder hier hineinziehen / einfügen</small></div>
+    </div>
+    <div id="tab-txt" hidden>
+      <label>Text<textarea id="text">Einkaufsliste
+- Milch
+- Brot
+- Katzenfutter</textarea></label>
+      <div class="row">
+        <label><span>Schriftgröße <b id="vFs">28</b></span><input type="range" id="fs" min="14" max="96" value="28"></label>
+      </div>
+      <div class="row">
+        <label class="chk"><input type="checkbox" id="bold" checked>Fett</label>
+        <label class="chk"><input type="checkbox" id="center">Zentriert</label>
+      </div>
+    </div>
+    <div id="imgOpts">
+      <label>Rasterung<select id="dither">
+        <option value="fs">Floyd–Steinberg (Fotos)</option>
+        <option value="atk" selected>Atkinson (Fotos, kontrastreich)</option>
+        <option value="bayer">Raster / Bayer (Comic-Look)</option>
+        <option value="thr">Schwelle (Grafiken, Logos)</option>
+      </select></label>
+      <label><span>Helligkeit <b id="vBr">0</b></span><input type="range" id="br" min="-100" max="100" value="0"></label>
+      <label><span>Kontrast <b id="vCo">0</b></span><input type="range" id="co" min="-100" max="100" value="0"></label>
+      <div class="row">
+        <label class="chk"><input type="checkbox" id="rot">Quer drucken (90°)</label>
+        <label class="chk"><input type="checkbox" id="inv">Invertieren</label>
+      </div>
+    </div>
+    <label><span>Schwärzung (Hitze) <b id="vEn">mittel</b></span><input type="range" id="en" min="1" max="5" value="3"></label>
+    <label><span>Vorschub danach <b id="vFeed">80</b> Zeilen</span><input type="range" id="feed" min="0" max="200" step="10" value="80"></label>
+    <div class="row">
+      <button id="btnPrint" class="pri" disabled>Drucken</button>
+      <button id="btnFeed" disabled>Papier vorschieben</button>
+    </div>
+    <progress id="prog" value="0" max="1" hidden></progress>
+    <details>
+      <summary>Erweitert</summary>
+      <div style="display:grid;gap:12px;margin-top:8px">
+        <label>Protokoll<select id="proto">
+          <option value="auto">Automatisch (nach Gerätename)</option>
+          <option value="gb">Klassisch (GB01/GB02/GB03/GT01/MX05–MX10/YT01 …)</option>
+          <option value="mxw">MXW01-Familie</option>
+        </select></label>
+        <label><span>Paketgröße <b id="vMtu">128</b> Byte</span><input type="range" id="mtu" min="20" max="240" step="4" value="128"></label>
+        <label><span>Pause zwischen Paketen <b id="vDly">12</b> ms</span><input type="range" id="dly" min="0" max="60" value="12"></label>
+        <label class="chk"><input type="checkbox" id="flip">Bitreihenfolge umkehren (falls Druck gespiegelt)</label>
+        <div id="log"></div>
+      </div>
+    </details>
+  </section>
+</main>
+<script>
+{
+const $ = id => document.getElementById(id);
+const W = 384, BPR = W / 8;
+const log = m => { const l = $('log'); l.textContent += m + '\n'; l.scrollTop = l.scrollHeight; };
+if (!navigator.bluetooth) { $('noBt').hidden = false; }
+
+/* ---------- Bildverarbeitung ---------- */
+let srcImg = null, mode = 'img', bits = null, rows = 0;
+const prev = $('preview'), pctx = prev.getContext('2d', { willReadFrequently: true });
+
+function grayFromImage() {
+  const rot = $('rot').checked;
+  const iw = rot ? srcImg.height : srcImg.width, ih = rot ? srcImg.width : srcImg.height;
+  const h = Math.max(1, Math.round(ih * W / iw));
+  const c = document.createElement('canvas'); c.width = W; c.height = h;
+  const x = c.getContext('2d', { willReadFrequently: true });
+  x.fillStyle = '#fff'; x.fillRect(0, 0, W, h);
+  x.save();
+  if (rot) { x.translate(W, 0); x.rotate(Math.PI / 2); x.drawImage(srcImg, 0, 0, h, W); }
+  else x.drawImage(srcImg, 0, 0, W, h);
+  x.restore();
+  return { data: x.getImageData(0, 0, W, h).data, h };
+}
+
+function grayFromText() {
+  const fs = +$('fs').value, font = `${$('bold').checked ? '700' : '400'} ${fs}px system-ui, sans-serif`;
+  const m = document.createElement('canvas').getContext('2d'); m.font = font;
+  const lines = [];
+  for (const para of $('text').value.split('\n')) {
+    let cur = '';
+    for (const w of para.split(' ')) {
+      const t = cur ? cur + ' ' + w : w;
+      if (m.measureText(t).width > W - 8 && cur) { lines.push(cur); cur = w; } else cur = t;
+    }
+    lines.push(cur);
+  }
+  const lh = Math.round(fs * 1.25), h = Math.max(1, lines.length * lh + 8);
+  const c = document.createElement('canvas'); c.width = W; c.height = h;
+  const x = c.getContext('2d', { willReadFrequently: true });
+  x.fillStyle = '#fff'; x.fillRect(0, 0, W, h);
+  x.fillStyle = '#000'; x.font = font; x.textBaseline = 'top';
+  const ctr = $('center').checked; x.textAlign = ctr ? 'center' : 'left';
+  lines.forEach((l, i) => x.fillText(l, ctr ? W / 2 : 4, 4 + i * lh));
+  return { data: x.getImageData(0, 0, W, h).data, h };
+}
+
+const BAYER = [0,32,8,40,2,34,10,42,48,16,56,24,50,18,58,26,12,44,4,36,14,46,6,38,60,28,52,20,62,30,54,22,3,35,11,43,1,33,9,41,51,19,59,27,49,17,57,25,15,47,7,39,13,45,5,37,63,31,55,23,61,29,53,21];
+
+function render() {
+  if (mode === 'img' && !srcImg) { $('empty').hidden = false; prev.height = 1; bits = null; updateBtns(); return; }
+  const { data, h } = mode === 'img' ? grayFromImage() : grayFromText();
+  const n = W * h, g = new Float32Array(n);
+  const br = +$('br').value * 1.28, co = +$('co').value, f = (259 * (co + 255)) / (255 * (259 - co));
+  const inv = $('inv').checked && mode === 'img';
+  for (let i = 0; i < n; i++) {
+    let v = 0.299 * data[i*4] + 0.587 * data[i*4+1] + 0.114 * data[i*4+2];
+    if (mode === 'img') { v = f * (v - 128) + 128 + br; if (inv) v = 255 - v; }
+    g[i] = v;
+  }
+  const out = new Uint8Array(n); // 1 = schwarz
+  const d = mode === 'txt' ? 'thr' : $('dither').value;
+  if (d === 'thr') for (let i = 0; i < n; i++) out[i] = g[i] < 128 ? 1 : 0;
+  else if (d === 'bayer') for (let y = 0; y < h; y++) for (let x = 0; x < W; x++) { const i = y*W+x; out[i] = g[i] < (BAYER[(y&7)*8+(x&7)] + 0.5) * 4 ? 1 : 0; }
+  else {
+    const atk = d === 'atk';
+    for (let y = 0; y < h; y++) for (let x = 0; x < W; x++) {
+      const i = y * W + x, o = g[i], nv = o < 128 ? 0 : 255; out[i] = nv ? 0 : 1;
+      const e = o - nv;
+      const add = (dx, dy, k) => { const xx = x + dx, yy = y + dy; if (xx >= 0 && xx < W && yy < h) g[yy*W+xx] += e * k; };
+      if (atk) { const k = 1/8; add(1,0,k); add(2,0,k); add(-1,1,k); add(0,1,k); add(1,1,k); add(0,2,k); }
+      else { add(1,0,7/16); add(-1,1,3/16); add(0,1,5/16); add(1,1,1/16); }
+    }
+  }
+  bits = out; rows = h;
+  prev.height = h;
+  const im = pctx.createImageData(W, h);
+  for (let i = 0; i < n; i++) { const v = out[i] ? 20 : 255; im.data[i*4] = im.data[i*4+1] = im.data[i*4+2] = v; im.data[i*4+3] = 255; }
+  pctx.putImageData(im, 0, 0);
+  $('empty').hidden = true;
+  updateBtns();
+}
+
+function rowBytes(y) {
+  const b = new Uint8Array(BPR), flip = $('flip').checked;
+  for (let x = 0; x < W; x++) if (bits[y*W+x]) b[x >> 3] |= flip ? (0x80 >> (x & 7)) : (1 << (x & 7));
+  return b;
+}
+
+/* ---------- Bluetooth ---------- */
+const CRC = new Uint8Array(256);
+for (let i = 0; i < 256; i++) { let c = i; for (let j = 0; j < 8; j++) c = c & 0x80 ? ((c << 1) ^ 0x07) & 0xff : (c << 1) & 0xff; CRC[i] = c; }
+const crc8 = d => { let c = 0; for (const b of d) c = CRC[(c ^ b) & 0xff]; return c; };
+
+let dev = null, chWrite = null, chNotify = null, chData = null, proto = 'gb', busy = false, paused = false, waiters = [];
+
+function pkt(head, cmd, data) {
+  data = Array.from(data);
+  return [...head, cmd, 0x00, data.length & 0xff, (data.length >> 8) & 0xff, ...data, crc8(data), 0xff];
+}
+const gbCmd = (c, d) => pkt([0x51, 0x78], c, d);
+const mxCmd = (c, d) => pkt([0x22, 0x21], c, d);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function writeChunks(ch, bytes) {
+  const size = +$('mtu').value, dly = +$('dly').value, arr = Uint8Array.from(bytes);
+  for (let o = 0; o < arr.length; o += size) {
+    while (paused) await sleep(20);
+    const part = arr.slice(o, o + size);
+    if (ch.writeValueWithoutResponse) await ch.writeValueWithoutResponse(part); else await ch.writeValue(part);
+    if (dly) await sleep(dly);
+    setProg(o + size, arr.length);
+  }
+}
+function setProg(v, m) { const p = $('prog'); p.max = m; p.value = Math.min(v, m); }
+
+function onNotify(e) {
+  const v = new Uint8Array(e.target.value.buffer);
+  log('← ' + Array.from(v, b => b.toString(16).padStart(2, '0')).join(' '));
+  if (v[0] === 0x51 && v[1] === 0x78 && v[2] === 0xae) paused = v[6] === 0x10;
+  if (v[0] === 0x22 && v[1] === 0x21) {
+    const cmd = v[2];
+    waiters = waiters.filter(w => { if (w.cmd === cmd) { w.res(v); return false; } return true; });
+  }
+}
+function waitFor(cmd, ms = 8000) {
+  return new Promise((res, rej) => { const w = { cmd, res }; waiters.push(w); setTimeout(() => { waiters = waiters.filter(x => x !== w); rej(new Error('Keine Antwort vom Drucker (0x' + cmd.toString(16) + ')')); }, ms); });
+}
+
+async function connect() {
+  try {
+    setStatus('suche …');
+    dev = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [0xae30, 0xaf30, 0xae3a] });
+    dev.addEventListener('gattserverdisconnected', () => { chWrite = null; setStatus('getrennt'); updateBtns(); });
+    setStatus('verbinde mit ' + (dev.name || 'Gerät') + ' …');
+    const srv = await dev.gatt.connect();
+    let svc = null, base = 0xae;
+    for (const [s, b] of [[0xae30, 0xae], [0xaf30, 0xaf]]) { try { svc = await srv.getPrimaryService(s); base = b; break; } catch {} }
+    if (!svc) throw new Error('Druckerdienst (AE30/AF30) nicht gefunden – evtl. anderes Protokoll.');
+    const cid = n => (base << 8) | n;
+    chWrite = await svc.getCharacteristic(cid(0x01));
+    try { chNotify = await svc.getCharacteristic(cid(0x02)); await chNotify.startNotifications(); chNotify.addEventListener('characteristicvaluechanged', onNotify); } catch (e) { log('Kein Notify: ' + e.message); }
+    const p = $('proto').value, name = (dev.name || '').toUpperCase();
+    proto = p !== 'auto' ? p : (name.startsWith('MXW') ? 'mxw' : 'gb');
+    if (proto === 'mxw') chData = await svc.getCharacteristic(cid(0x03));
+    log('Verbunden: ' + (dev.name || '?') + ' · Protokoll ' + proto);
+    setStatus((dev.name || 'Drucker') + ' verbunden', true);
+  } catch (e) {
+    if (e.name !== 'NotFoundError') log('Fehler: ' + e.message);
+    setStatus(e.name === 'NotFoundError' ? 'nicht verbunden' : 'Fehler: ' + e.message);
+  }
+  updateBtns();
+}
+
+const ENERGY = [0x1800, 0x3000, 0x4800, 0x7000, 0xa000];
+const MXINT = [0x30, 0x50, 0x70, 0x90, 0xc0];
+
+async function printGB(feedRows) {
+  const e = ENERGY[$('en').value - 1], speed = mode === 'txt' ? 8 : 25;
+  const buf = [];
+  buf.push(...gbCmd(0xa3, [0x00]));
+  buf.push(...gbCmd(0xa4, [0x32]));
+  buf.push(...gbCmd(0xaf, [e & 0xff, e >> 8]));
+  buf.push(...gbCmd(0xbe, [0x01]));
+  buf.push(...gbCmd(0xbd, [speed]));
+  buf.push(...gbCmd(0xa6, [0xaa,0x55,0x17,0x38,0x44,0x5f,0x5f,0x5f,0x44,0x38,0x2c]));
+  for (let y = 0; y < rows; y++) buf.push(...gbCmd(0xa2, rowBytes(y)));
+  for (let y = 0; y < feedRows; y++) buf.push(...gbCmd(0xa2, new Uint8Array(BPR)));
+  buf.push(...gbCmd(0xa6, [0xaa,0x55,0x17,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x17]));
+  buf.push(...gbCmd(0xa3, [0x00]));
+  await writeChunks(chWrite, buf);
+}
+
+async function printMXW(feedRows) {
+  const total = Math.max(90, rows + feedRows), data = new Uint8Array(total * BPR);
+  for (let y = 0; y < rows; y++) data.set(rowBytes(y), y * BPR);
+  await chWrite.writeValueWithoutResponse(Uint8Array.from(mxCmd(0xa2, [MXINT[$('en').value - 1]])));
+  await sleep(50);
+  const ack = waitFor(0xa9);
+  await chWrite.writeValueWithoutResponse(Uint8Array.from(mxCmd(0xa9, [total & 0xff, total >> 8, 0x30, 0x00])));
+  const r = await ack;
+  if (r[6] !== 0) throw new Error('Drucker lehnt ab (Papier? Deckel? Akku?)');
+  await writeChunks(chData, data);
+  const done = waitFor(0xaa, 30000);
+  await chWrite.writeValueWithoutResponse(Uint8Array.from(mxCmd(0xad, [0x00])));
+  await done.catch(e => log(e.message));
+}
+
+async function doPrint(feedOnly) {
+  if (!chWrite || busy) return;
+  busy = true; updateBtns(); $('prog').hidden = false; setProg(0, 1);
+  const feedRows = +$('feed').value;
+  const savedBits = bits, savedRows = rows;
+  try {
+    if (feedOnly) { bits = new Uint8Array(W); rows = 1; }
+    if (proto === 'mxw') await printMXW(feedOnly ? 60 : feedRows); else await printGB(feedOnly ? 60 : feedRows);
+    setStatus((dev.name || 'Drucker') + ' – fertig', true);
+  } catch (e) { log('Fehler: ' + e.message); setStatus('Fehler: ' + e.message, true); }
+  bits = savedBits; rows = savedRows;
+  busy = false; $('prog').hidden = true; updateBtns();
+}
+
+/* ---------- UI ---------- */
+function setStatus(t, on) { $('status').innerHTML = ''; const d = document.createElement('span'); d.className = 'dot' + (chWrite ? ' on' : ''); $('status').append(d, t); }
+function updateBtns() {
+  const c = !!chWrite && !busy;
+  $('btnPrint').disabled = !c || !bits;
+  $('btnFeed').disabled = !c;
+  $('btnConnect').textContent = chWrite ? 'Neu verbinden' : 'Drucker verbinden';
+}
+function loadFile(f) {
+  if (!f || !f.type.startsWith('image/')) return;
+  const img = new Image();
+  img.onload = () => { srcImg = img; render(); };
+  img.src = URL.createObjectURL(f);
+}
+$('btnConnect').onclick = connect;
+$('btnPrint').onclick = () => doPrint(false);
+$('btnFeed').onclick = () => doPrint(true);
+const drop = $('drop');
+drop.onclick = () => $('file').click();
+drop.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('file').click(); } };
+$('file').onchange = e => loadFile(e.target.files[0]);
+drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
+drop.ondragleave = () => drop.classList.remove('over');
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); loadFile(e.dataTransfer.files[0]); };
+document.addEventListener('paste', e => { const f = [...(e.clipboardData?.files || [])][0]; if (f) { switchTab('img'); loadFile(f); } });
+function switchTab(t) {
+  mode = t;
+  document.querySelectorAll('[role=tab]').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === t));
+  $('tab-img').hidden = t !== 'img'; $('tab-txt').hidden = t !== 'txt'; $('imgOpts').hidden = t !== 'img';
+  render();
+}
+document.querySelectorAll('[role=tab]').forEach(b => b.onclick = () => switchTab(b.dataset.tab));
+const EN = ['sehr hell', 'hell', 'mittel', 'dunkel', 'sehr dunkel'];
+const bind = (id, out, fmt = v => v, rerender = true) => $(id).addEventListener('input', () => { if (out) $(out).textContent = fmt($(id).value); if (rerender) render(); });
+bind('br', 'vBr'); bind('co', 'vCo'); bind('fs', 'vFs');
+bind('en', 'vEn', v => EN[v - 1], false); bind('feed', 'vFeed', v => v, false);
+bind('mtu', 'vMtu', v => v, false); bind('dly', 'vDly', v => v, false);
+['dither', 'rot', 'inv', 'text', 'bold', 'center'].forEach(id => $(id).addEventListener('input', render));
+updateBtns();
+}
+</script>
+</body>
+</html>
