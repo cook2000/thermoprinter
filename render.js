@@ -1,0 +1,294 @@
+/* Druckfrisch – Bildaufbereitung, Rahmen und Drucklayout */
+const Render = (() => {
+/* ---------- Rahmen ---------- */
+const rnd = s => () => (s = (s * 16807) % 2147483647) / 2147483647;
+function star(c, x, y, r, fill = true, rot = 0) {
+  c.beginPath();
+  for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + rot + i * Math.PI / 5, rr = i % 2 ? r * 0.45 : r; c.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr); }
+  c.closePath(); fill ? c.fill() : c.stroke();
+}
+function heart(c, x, y, s, fill = true) {
+  c.beginPath(); y -= s * 0.1;
+  c.moveTo(x, y + s * 0.8);
+  c.bezierCurveTo(x - s * 1.3, y, x - s * 0.7, y - s * 1.0, x, y - s * 0.35);
+  c.bezierCurveTo(x + s * 0.7, y - s * 1.0, x + s * 1.3, y, x, y + s * 0.8);
+  fill ? c.fill() : c.stroke();
+}
+function flower(c, x, y, r, k) {
+  c.save(); c.translate(x, y); c.rotate(k * 0.7); c.lineWidth = 2.5;
+  for (let i = 0; i < 5; i++) { const a = i * Math.PI * 2 / 5; c.beginPath(); c.ellipse(Math.cos(a) * r * 0.55, Math.sin(a) * r * 0.55, r * 0.45, r * 0.32, a, 0, 7); c.fillStyle = '#fff'; c.fill(); c.stroke(); }
+  c.fillStyle = '#000'; c.beginPath(); c.arc(0, 0, r * 0.28, 0, 7); c.fill(); c.restore();
+}
+function paw(c, x, y, s, rot) {
+  c.save(); c.translate(x, y); c.rotate(rot);
+  c.beginPath(); c.ellipse(0, s * 0.3, s * 0.5, s * 0.4, 0, 0, 7); c.fill();
+  for (const [dx, dy] of [[-0.58, -0.25], [-0.2, -0.62], [0.2, -0.62], [0.58, -0.25]]) { c.beginPath(); c.arc(dx * s, dy * s, s * 0.21, 0, 7); c.fill(); }
+  c.restore();
+}
+function sparkle(c, x, y, r) {
+  c.beginPath(); c.moveTo(x, y - r); c.quadraticCurveTo(x, y, x + r, y); c.quadraticCurveTo(x, y, x, y + r); c.quadraticCurveTo(x, y, x - r, y); c.quadraticCurveTo(x, y, x, y - r); c.fill();
+}
+function ring(g, sp, fn) {
+  let i = 0; const x0 = g.l / 2, x1 = g.W - g.r / 2, y0 = g.t / 2, y1 = g.H - g.b / 2;
+  const nx = Math.max(1, Math.round((x1 - x0) / sp)), ny = Math.max(1, Math.round((y1 - y0) / sp));
+  for (let k = 0; k <= nx; k++) { const x = x0 + (x1 - x0) * k / nx; fn(x, y0, i++); fn(x, y1, i++); }
+  for (let k = 1; k < ny; k++) { const y = y0 + (y1 - y0) * k / ny; fn(x0, y, i++); fn(x1, y, i++); }
+}
+function box(c, g, lw, pad, r, dash) {
+  c.save(); c.lineWidth = lw; if (dash) c.setLineDash(dash);
+  c.beginPath(); c.roundRect(g.l - pad, g.t - pad, g.W - g.l - g.r + 2 * pad, g.ih + 2 * pad, r); c.stroke(); c.restore();
+}
+function scatter(c, g, n, seed, fn, avoid = () => false) {
+  const R = rnd(seed); let k = 0, tries = 0;
+  while (k < n && tries++ < n * 30) {
+    const x = R() * g.W, y = R() * g.H;
+    if (x > g.l - 12 && x < g.W - g.r + 12 && y > g.t - 12 && y < g.t + g.ih + 12) continue;
+    if (avoid(x, y)) continue;
+    fn(x, y, R, k++);
+  }
+}
+const FRAMES = [
+  { id: 'none', name: 'Ohne' },
+  { id: 'stars', name: 'Sterne', m: 36, draw: (c, g) => { box(c, g, 3, 6, 10); ring(g, 40, (x, y, i) => star(c, x, y, i % 3 ? 10 : 14, i % 4 !== 1, i * 0.3)); } },
+  { id: 'hearts', name: 'Herzen', m: 36, draw: (c, g) => { box(c, g, 2, 6, 16); c.lineWidth = 2.5; ring(g, 38, (x, y, i) => heart(c, x, y, i % 2 ? 9 : 12, i % 2 === 0)); } },
+  { id: 'flowers', name: 'Blumen', m: 40, draw: (c, g) => { box(c, g, 2, 6, 14); ring(g, 44, (x, y, i) => flower(c, x, y, 17, i)); } },
+  { id: 'paws', name: 'Tatzen', m: 36, draw: (c, g) => { box(c, g, 3, 6, 18); ring(g, 40, (x, y, i) => paw(c, x, y, 12, i % 2 ? 0.45 : -0.45)); } },
+  { id: 'party', name: 'Party', m: 30, t: 70, draw: (c, g) => {
+      box(c, g, 3, 6, 10);
+      c.lineWidth = 2; c.beginPath(); c.moveTo(0, 6); c.quadraticCurveTo(g.W / 2, 40, g.W, 6); c.stroke();
+      const n = 11;
+      for (let i = 0; i < n; i++) {
+        const t = (i + 0.5) / n, x = g.W * t, y = 6 + 2 * t * (1 - t) * 34;
+        c.beginPath(); c.moveTo(x - 14, y); c.lineTo(x + 14, y); c.lineTo(x, y + 26); c.closePath();
+        if (i % 2) c.fill(); else { c.fillStyle = '#fff'; c.fill(); c.stroke(); c.fillStyle = '#000'; c.beginPath(); c.arc(x, y + 9, 3, 0, 7); c.fill(); }
+      }
+      scatter(c, g, 40, 7, (x, y, R, k) => { if (k % 3 === 0) star(c, x, y, 6, true, R() * 3); else { c.beginPath(); c.arc(x, y, 2 + R() * 3, 0, 7); c.fill(); } }, (x, y) => y < 56);
+    } },
+  { id: 'cat', name: 'Katze', m: 22, t: 64, b: 56, draw: (c, g) => {
+      const top = g.t - 8, bot = g.t + g.ih + 8;
+      for (const s of [-1, 1]) {
+        const x = g.W / 2 + s * g.W * 0.3;
+        c.beginPath(); c.moveTo(x - 40 * s, top + 4); c.lineTo(x - 22 * s, top - 54); c.lineTo(x + 34 * s, top + 4); c.closePath(); c.fill();
+        c.fillStyle = '#fff'; c.beginPath(); c.moveTo(x - 28 * s, top); c.lineTo(x - 20 * s, top - 36); c.lineTo(x + 14 * s, top); c.closePath(); c.fill(); c.fillStyle = '#000';
+      }
+      box(c, g, 7, 8, 30);
+      const cx = g.W / 2, ny = bot + 14;
+      c.beginPath(); c.moveTo(cx - 9, ny); c.lineTo(cx + 9, ny); c.lineTo(cx, ny + 9); c.closePath(); c.fill();
+      c.lineWidth = 3; c.beginPath(); c.arc(cx - 8, ny + 10, 8, 0, Math.PI); c.stroke(); c.beginPath(); c.arc(cx + 8, ny + 10, 8, 0, Math.PI); c.stroke();
+      c.lineWidth = 2.5;
+      for (const s of [-1, 1]) for (const d of [-8, 0, 8]) { const x0 = cx + s * 40; c.beginPath(); c.moveTo(x0, ny + 6); c.lineTo(x0 + s * 60, ny + 6 + d * 1.4); c.stroke(); }
+    } },
+  { id: 'space', name: 'Weltraum', m: 36, t: 70, draw: (c, g) => {
+      box(c, g, 2, 6, 6);
+      c.beginPath(); c.arc(42, 34, 24, 0, 7); c.fill(); c.fillStyle = '#fff'; c.beginPath(); c.arc(54, 26, 21, 0, 7); c.fill(); c.fillStyle = '#000';
+      const px = g.W - 48; c.lineWidth = 2.5; c.beginPath(); c.arc(px, 34, 15, 0, 7); c.stroke();
+      c.beginPath(); c.ellipse(px, 34, 32, 8, -0.35, 0, 7); c.stroke();
+      c.fillStyle = '#fff'; c.beginPath(); c.arc(px, 34, 13.5, 0, 7); c.fill(); c.fillStyle = '#000';
+      c.beginPath(); c.arc(px - 4, 30, 3, 0, 7); c.fill(); c.beginPath(); c.arc(px + 5, 38, 2, 0, 7); c.fill();
+      scatter(c, g, 55, 3, (x, y, R, k) => k % 4 === 0 ? sparkle(c, x, y, 7) : (c.beginPath(), c.arc(x, y, 1 + R() * 2, 0, 7), c.fill()), (x, y) => (x < 80 || x > g.W - 90) && y < 66);
+    } },
+  { id: 'film', name: 'Filmstreifen', m: 32, t: 16, b: 16, draw: (c, g) => {
+      c.fillRect(0, 0, 28, g.H); c.fillRect(g.W - 28, 0, 28, g.H); c.fillRect(0, 0, g.W, 10); c.fillRect(0, g.H - 10, g.W, 10);
+      c.fillStyle = '#fff';
+      for (let y = 16; y < g.H - 24; y += 26) { c.beginPath(); c.roundRect(8, y, 12, 14, 3); c.roundRect(g.W - 20, y, 12, 14, 3); c.fill(); }
+      c.fillStyle = '#000';
+    } },
+  { id: 'zigzag', name: 'Zickzack', m: 30, draw: (c, g) => {
+      box(c, g, 2, 6, 4); c.lineWidth = 3; c.lineJoin = 'round';
+      const pts = [[8, 8], [g.W - 8, 8], [g.W - 8, g.H - 8], [8, g.H - 8], [8, 8]];
+      c.beginPath();
+      for (let s = 0; s < 4; s++) {
+        const [ax, ay] = pts[s], [bx, by] = pts[s + 1], len = Math.hypot(bx - ax, by - ay), n = Math.round(len / 14);
+        for (let i = 0; i <= n; i++) { const t = i / n, o = i % 2 ? 7 : 0, nx = (by - ay) / len, ny = -(bx - ax) / len; c.lineTo(ax + (bx - ax) * t - nx * o, ay + (by - ay) * t - ny * o); }
+      }
+      c.stroke();
+    } },
+  { id: 'confetti', name: 'Konfetti', m: 34, draw: (c, g) => {
+      box(c, g, 2, 6, 10, [8, 6]);
+      scatter(c, g, 90, 11, (x, y, R, k) => {
+        const t = k % 4; c.save(); c.translate(x, y); c.rotate(R() * 6);
+        if (t === 0) { c.beginPath(); c.arc(0, 0, 3 + R() * 2, 0, 7); c.fill(); }
+        else if (t === 1) c.fillRect(-5, -2, 10, 4);
+        else if (t === 2) { c.beginPath(); c.moveTo(0, -5); c.lineTo(5, 4); c.lineTo(-5, 4); c.closePath(); c.fill(); }
+        else { c.lineWidth = 2; c.beginPath(); c.moveTo(-6, 0); c.quadraticCurveTo(-3, -5, 0, 0); c.quadraticCurveTo(3, 5, 6, 0); c.stroke(); }
+        c.restore();
+      });
+    } },
+];
+
+/* ---------- Komposition ---------- */
+const BASE = 384; // Rahmen sind für 384 logische Pixel gezeichnet und werden skaliert
+
+function geo(F, ih) {
+  if (!F || !F.draw) return { l: 0, r: 0, t: 0, b: 0, W: BASE, ih, H: ih };
+  const g = { l: F.m, r: F.m, t: F.t ?? F.m, b: F.b ?? F.m, W: BASE, ih };
+  g.H = g.t + g.ih + g.b; return g;
+}
+
+function toGray(data, n) {
+  const g = new Float32Array(n);
+  for (let i = 0; i < n; i++) g[i] = 0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2];
+  return g;
+}
+
+// Automatik: Tonwerte strecken (1 % / 99 %)
+function autoLevels(g) {
+  const hist = new Uint32Array(256);
+  for (const v of g) hist[Math.max(0, Math.min(255, v | 0))]++;
+  const n = g.length; let acc = 0, lo = 0, hi = 255;
+  for (let i = 0; i < 256; i++) { acc += hist[i]; if (acc > n * 0.01) { lo = i; break; } }
+  acc = 0;
+  for (let i = 255; i >= 0; i--) { acc += hist[i]; if (acc > n * 0.01) { hi = i; break; } }
+  if (hi - lo < 30) return;
+  const k = 255 / (hi - lo);
+  for (let i = 0; i < n; i++) g[i] = (g[i] - lo) * k;
+}
+
+function contrast(g, amount) {
+  const f = (259 * (amount + 255)) / (255 * (259 - amount));
+  for (let i = 0; i < g.length; i++) g[i] = f * (g[i] - 128) + 128;
+}
+
+function errorDiffuse(g, w, h, atkinson) {
+  const out = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = y * w + x, o = g[i], nv = o < 128 ? 0 : 255; out[i] = nv ? 0 : 1;
+    const e = o - nv;
+    const add = (dx, dy, k) => { const xx = x + dx, yy = y + dy; if (xx >= 0 && xx < w && yy < h) g[yy * w + xx] += e * k; };
+    if (atkinson) { const k = 1 / 8; add(1, 0, k); add(2, 0, k); add(-1, 1, k); add(0, 1, k); add(1, 1, k); add(0, 2, k); }
+    else { add(1, 0, 7 / 16); add(-1, 1, 3 / 16); add(0, 1, 5 / 16); add(1, 1, 1 / 16); }
+  }
+  return out;
+}
+
+function outline(g, w, h, bright) {
+  const b = new Float32Array(w * h);
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+    let s = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) s += g[(y + dy) * w + x + dx];
+    b[y * w + x] = s / 9;
+  }
+  const out = new Uint8Array(w * h), t = Math.max(20, 70 + bright * 0.8);
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+    const i = y * w + x;
+    const gx = -b[i - w - 1] - 2 * b[i - 1] - b[i + w - 1] + b[i - w + 1] + 2 * b[i + 1] + b[i + w + 1];
+    const gy = -b[i - w - 1] - 2 * b[i - w] - b[i - w + 1] + b[i + w - 1] + 2 * b[i + w] + b[i + w + 1];
+    if (Math.hypot(gx, gy) > t) out[i] = 1;
+  }
+  return out;
+}
+
+// look: 'foto' | 'comic' | 'umriss', bright: -50..50
+function process(data, w, h, look, bright) {
+  const g = toGray(data, w * h);
+  autoLevels(g);
+  if (look === 'umriss') return outline(g, w, h, bright);
+  const add = bright * 1.6;
+  for (let i = 0; i < g.length; i++) g[i] += add;
+  if (look === 'comic') { contrast(g, 70); return errorDiffuse(g, w, h, true); }
+  return errorDiffuse(g, w, h, false);
+}
+
+// Bild + Rahmen + Beschriftung in Druckbreite `width` (Pixel) zusammensetzen
+function compose({ img, width, frameId, caption, look, bright }) {
+  const F = FRAMES.find(f => f.id === frameId) || FRAMES[0];
+  const s = width / BASE;
+  const cap = (caption || '').trim(), capH = cap ? 46 : 0;
+  const g0 = geo(F, 0);
+  const cw = Math.max(8, Math.round(width - (g0.l + g0.r) * s));
+  const ch = Math.max(1, Math.round(img.height * cw / img.width));
+  const cc = document.createElement('canvas'); cc.width = cw; cc.height = ch;
+  const cx = cc.getContext('2d', { willReadFrequently: true });
+  cx.fillStyle = '#fff'; cx.fillRect(0, 0, cw, ch); cx.drawImage(img, 0, 0, cw, ch);
+  const content = process(cx.getImageData(0, 0, cw, ch).data, cw, ch, look, bright);
+
+  const g = geo(F, ch / s + capH);
+  const H = Math.round(g.H * s);
+  const fc = document.createElement('canvas'); fc.width = width; fc.height = H;
+  const fx = fc.getContext('2d', { willReadFrequently: true });
+  fx.fillStyle = '#fff'; fx.fillRect(0, 0, width, H);
+  fx.save(); fx.scale(s, s);
+  if (F.draw) { fx.fillStyle = '#000'; fx.strokeStyle = '#000'; fx.lineCap = 'round'; F.draw(fx, g); }
+  if (cap) {
+    const cwl = BASE - g.l - g.r, y0 = g.t + ch / s;
+    fx.fillStyle = '#fff'; fx.fillRect(g.l, y0, cwl, capH);
+    let fs = 30; fx.fillStyle = '#000'; fx.textAlign = 'center'; fx.textBaseline = 'middle';
+    do { fx.font = `800 ${fs}px Lexend, system-ui, sans-serif`; } while (fx.measureText(cap).width > cwl - 12 && --fs > 12);
+    fx.fillText(cap, g.l + cwl / 2, y0 + capH / 2 + 2);
+  }
+  fx.restore();
+  const fd = fx.getImageData(0, 0, width, H).data, bits = new Uint8Array(width * H);
+  for (let i = 0; i < width * H; i++) bits[i] = fd[i * 4] < 128 ? 1 : 0;
+  const ox = Math.round(g.l * s), oy = Math.round(g.t * s), cwi = Math.min(cw, width - ox);
+  for (let y = 0; y < ch && y + oy < H; y++) bits.set(content.subarray(y * cw, y * cw + cwi), (y + oy) * width + ox);
+  return { bits, w: width, h: H };
+}
+
+// 1-Bit-Bild auf andere Breite skalieren (nächster Nachbar) – für „Nochmal drucken“
+function scaleBits(src, width) {
+  if (src.w === width) return src;
+  const k = src.w / width, h = Math.max(1, Math.round(src.h / k)), bits = new Uint8Array(width * h);
+  for (let y = 0; y < h; y++) { const sy = Math.min(src.h - 1, (y * k) | 0); for (let x = 0; x < width; x++) bits[y * width + x] = src.bits[sy * src.w + Math.min(src.w - 1, (x * k) | 0)]; }
+  return { bits, w: width, h };
+}
+
+// Drucklayout: Rolle oder Sticker, mehrfach, mit Schneidelinien
+// comp(width) liefert {bits,w,h}; opts: {mode, W, dpi, stickerMm, count}
+function layout(comp, { mode, W, dpi, stickerMm, count }) {
+  const parts = [];
+  const blank = n => ({ bits: new Uint8Array(W * n), w: W, h: n });
+  const cut = () => { const n = Math.max(2, Math.round(dpi / 100)), b = new Uint8Array(W * n), seg = Math.round(dpi / 12); for (let y = 0; y < n; y++) for (let x = 0; x < W; x++) if ((x % (seg * 2)) < seg) b[y * W + x] = 1; return { bits: b, w: W, h: n }; };
+  const pad = (img, w) => { if (img.w === w) return img; const out = new Uint8Array(w * img.h), ox = (w - img.w) >> 1; for (let y = 0; y < img.h; y++) out.set(img.bits.subarray(y * img.w, (y + 1) * img.w), y * w + ox); return { bits: out, w, h: img.h }; };
+  if (mode === 'sticker') {
+    const L = Math.round(stickerMm / 25.4 * dpi), m = Math.round(2 / 25.4 * dpi), avail = L - 2 * m;
+    let img = comp(W);
+    if (img.h > avail) { const w2 = Math.max(64, Math.floor(W * avail / img.h / 8) * 8); img = comp(w2); }
+    img = pad(img, W);
+    const top = Math.max(0, Math.floor((L - img.h) / 2)), bottom = Math.max(0, L - img.h - top);
+    parts.push(cut());
+    for (let i = 0; i < count; i++) { parts.push(blank(top), img, blank(bottom), cut()); }
+  } else {
+    const img = comp(W), gap = Math.round(dpi / 8);
+    for (let i = 0; i < count; i++) { if (i) parts.push(blank(gap), cut(), blank(gap)); parts.push(img); }
+  }
+  const H = parts.reduce((a, p) => a + p.h, 0), bits = new Uint8Array(W * H);
+  let o = 0; for (const p of parts) { bits.set(p.bits, o * W); o += p.h; }
+  return { bits, w: W, h: H };
+}
+
+function toCanvas({ bits, w, h }, canvas, ink = [29, 27, 24]) {
+  canvas.width = w; canvas.height = h;
+  const c = canvas.getContext('2d'), im = c.createImageData(w, h);
+  for (let i = 0; i < w * h; i++) { const on = bits[i]; im.data[i * 4] = on ? ink[0] : 255; im.data[i * 4 + 1] = on ? ink[1] : 255; im.data[i * 4 + 2] = on ? ink[2] : 255; im.data[i * 4 + 3] = 255; }
+  c.putImageData(im, 0, 0); return canvas;
+}
+function fromCanvas(canvas) {
+  const { width: w, height: h } = canvas, d = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data, bits = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) bits[i] = d[i * 4] < 128 ? 1 : 0;
+  return { bits, w, h };
+}
+
+function frameThumb(F, size = 120) {
+  const c = document.createElement('canvas'); c.width = BASE; c.height = 300;
+  const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, BASE, 300);
+  const g = geo(F, 0); g.ih = 300 - g.t - g.b; g.H = 300;
+  x.fillStyle = '#e4dfd4'; x.fillRect(g.l, g.t, BASE - g.l - g.r, g.ih);
+  if (F.draw) { x.fillStyle = '#000'; x.strokeStyle = '#000'; x.lineCap = 'round'; F.draw(x, g); }
+  return c;
+}
+
+// Testdruck: Lineal, Graustufen, Schneidelinie – zum Ermitteln der Druckbreite
+function testPattern(W, dpi) {
+  const H = Math.round(dpi * 0.9), c = document.createElement('canvas'); c.width = W; c.height = H;
+  const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, W, H); x.fillStyle = '#000';
+  for (let px = 0; px < W; px += 8) { const big = px % 64 === 0; x.fillRect(px, 0, 2, big ? 34 : 14); if (big) { x.font = '700 16px sans-serif'; x.fillText(String(px), px + 3, 52); } }
+  x.fillRect(W - 3, 0, 3, H);
+  x.font = '800 22px sans-serif'; x.fillText(`Breite ${W} px · ${dpi} dpi`, 8, 90);
+  for (let i = 0; i < 8; i++) { x.fillStyle = `rgb(${i * 36},${i * 36},${i * 36})`; x.fillRect(8 + i * (W - 16) / 8, 110, (W - 16) / 8, 40); }
+  const img = fromCanvas(c);
+  const g = toGray(x.getImageData(0, 0, W, H).data, W * H);
+  const dith = errorDiffuse(g, W, H, false);
+  return { bits: dith, w: W, h: H };
+}
+
+return { FRAMES, compose, scaleBits, layout, toCanvas, fromCanvas, frameThumb, testPattern };
+})();
