@@ -172,6 +172,8 @@ details.card[open]{gap:14px}
 @keyframes feed{0%{transform:translateY(-30px)}100%{transform:translateY(0)}}
 #gate-a{font-size:36px;text-align:center;width:180px;padding:12px;border-radius:16px;border:3px solid var(--line)}
 .row2{display:flex;gap:12px}
+.ov-done{display:flex;flex-direction:column;gap:12px;width:100%}
+.ov-done .btn{width:100%}
 .toast{position:fixed;left:50%;bottom:max(28px,env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--ink);color:#fff;border-radius:18px;padding:16px 22px;font-size:18px;max-width:min(560px,92vw);z-index:30;box-shadow:0 10px 30px rgba(0,0,0,.25)}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 @media (max-width:560px){.recent-row{grid-template-columns:repeat(3,minmax(0,1fr))}.recent-row>:nth-child(4){display:none}.range-row{grid-template-columns:110px minmax(0,1fr) 56px}.slider{grid-template-columns:96px 26px minmax(0,1fr) 34px}}

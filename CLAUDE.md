@@ -26,9 +26,11 @@ Befunde aus Testdrucken am 27.11.2026:
 | --- | --- |
 | BLE-Name | `MXW01`, Service `0xAE30`, Charakteristiken `AE01` (Befehle), `AE02` (Notify), `AE03` (Bilddaten) |
 | Druckbreite | **384 Punkte** (48 Byte/Zeile im 1-Bit-Modus). Testdruck mit 384 px füllt genau die Breite. Mit 576 px bricht jede Zeile um, das Bild erscheint doppelt und schräg. |
-| „300 dpi“ laut Hersteller | Horizontal falsch: 384 Punkte auf ca. 48 mm = 203 dpi. Laut Beschreibung „200 dpi = Highspeed, 300 dpi = HD“. Ob HD vertikal feinere Zeilen druckt, ist **offen** (Messung mit dem Labor steht aus). Hinweis aus einem Foto: Der HD-Druck aus Fun Print wirkte flacher als der Schnell-Druck. |
-| HD-Modus | Fun Print „HD“ = 4 Bit pro Punkt, 16 Graustufen, 192 Byte/Zeile. Sieht bei Fotos deutlich besser aus und druckt langsamer. |
-| Graustufen im 1-Bit-Modus | Im Testdruck liefen die 3 dunkelsten Stufen zu Schwarz zusammen, weil die Hitze zu hoch war (siehe Bug unten). |
+| „300 dpi“ laut Hersteller | Falsch. 203 dpi horizontal **und vertikal, in beiden Modi** (Labor 27.11.: 240-Zeilen-Balken = 30 mm in Schnell und HD). Es gibt keinen HD-Zeilenabstand. |
+| HD-Modus | 4 Bit pro Punkt, 16 Graustufen, 192 Byte/Zeile. Funktioniert (Labor 27.11.), siehe Übertragung unten. Halbbytes nicht tauschen. |
+| Hitze (Labor 27.11.) | **Schnell 70** (60 = Stufen am besten, Schrift etwas braun; ab 85 laufen dunkle Stufen zu). **HD 100** (Maximum; sichtbar erst ab Stufe ~6, bei 85 erst ab ~9). |
+| HD-Graustufen | Der Drucker zeigt nur etwa Stufe 6–15. Die App legt deshalb 1…15 auf `hdFloor`…15 (Standard 6), 0 bleibt weiß. HD-Fotos wirken sonst flau und bräunlich. |
+| Übertragung (Labor 27.11.) | Auf dem Mac (Chrome) kommen 192-Byte-Pakete nicht an (MTU vermutlich ~185) → Drucker wartet 60 s, `AA` mit `fc`. Mit 96-Byte-Paketen und 12 ms gehen Pakete verloren (Bild ab Mitte um halbe Zeile versetzt, `AA` `fe`). **Stabil: 96 Byte / 30 ms** (~25 s für 400 Zeilen). Schnell: 48 Byte / 12 ms. Android noch nicht getestet. |
 | Fun-Print-Kamera | Verzerrt die Vorschau und schneidet auf 1:1 zu. Unsere App druckt das Originalformat. |
 
 ### MXW01-Protokoll (aus Community-Projekten, u. a. matheisenheim/agodeo-web-printer, ramos-adrian/catprinter, veli-ozturk/mxw01-sticker-printer)
@@ -36,11 +38,13 @@ Befunde aus Testdrucken am 27.11.2026:
 - **Rahmen:** `22 21 <cmd> 00 <len lo> <len hi> <data…> <crc8(data)> FF`, CRC-8 mit Polynom 0x07.
 - **Ablauf:** `A2` Intensität → `A1` Status → `A9` Druckauftrag → Bilddaten auf `AE03` → `AD` Daten fertig → auf `AA` (Druck fertig) warten.
 - **A2 Intensität:** Wertebereich **0–100** (0x00–0x64), empfohlen **93** (0x5D).
-- **A9 Druckauftrag:** `[Zeilen lo, Zeilen hi, Bytes pro Zeile, Modus]`. Bytes pro Zeile: `0x30` = 48 (1 Bit) bzw. `0xC0` = 192 (4 Bit). Modus: `0x00` = 1 Bit, `0x02` = 4 Bit. Die Antwort `A9` mit `data[0] == 0` heißt OK.
+- **A9 Druckauftrag:** `[Zeilen lo, Zeilen hi, 0x30, Modus]`. Drittes Byte **immer `0x30`**, auch bei 4 Bit (wie catprinter und mxw01-sticker-printer; `0xC0` wird angenommen, druckt aber nicht). Modus: `0x00` = 1 Bit, `0x02` = 4 Bit. Die Antwort `A9` mit `data[0] == 0` heißt OK.
+- **AA Druck fertig:** Bedeutung der Bytes unklar. Erfolg Schnell: `00 6f 6f`; Abbruch nach 60 s: `fc 00 00`; HD mit verlorenen Paketen: `fe b6 b6`. Wird nur geloggt.
+- **AE:** kam einmal mit `10` während HD (evtl. Flusskontrolle „Puffer voll“, unbestätigt, wird nicht ausgewertet).
 - **1 Bit:** LSB zuerst, Bit 0 ist das linke Pixel, 1 = schwarz.
 - **4 Bit:** zwei Pixel pro Byte, **linkes Pixel im oberen Halbbyte**, 15 = schwarz, 0 = weiß.
 - **Minimum:** 90 Zeilen pro Auftrag, kürzere Aufträge mit weißen Zeilen auffüllen.
-- **Senden:** zeilenweise (48 bzw. 192 Byte pro Write) mit ca. 12 ms Pause.
+- **Senden:** Schnell 48 Byte pro Write mit 12 ms Pause, HD 96 Byte mit 30 ms (siehe Übertragung oben).
 - **A1 Status (Nutzdaten ab Byte 6):** `[0]` Zustand (0 bereit, 1 druckt, 2 Vorschub, 3 Auswurf), `[3]` Akku %, `[4]` Kopf-Temperatur °C, `[6]` 0 = OK, `[7]` Fehler (0x01/0x09 kein Papier, 0x04 überhitzt, 0x08 Akku schwach).
 
 ## Repository-Inhalt
@@ -61,6 +65,20 @@ Befunde aus Testdrucken am 27.11.2026:
 
 ## Stand
 
+**Arbeitsweise seit 27.11.:** Kein Git. Holger kopiert die Dateien manuell nach GitHub. Nach Änderungen sagen, welche Dateien hochzuladen sind. Version 1.1.0 erst, wenn am Tablet alles passt; Zwischenstände 1.0.x.
+
+### Version 1.0.1 (27.11.2026) – gebaut, nur mit simuliertem Drucker getestet
+
+Umsetzung des 1.1-Plans mit den Labor-Ergebnissen:
+- Bilder sind intern „Tinte“ 0–255 (`{ink,w,h}`). `Render.forPrint(img, hd)` macht daraus `{bits}` (Floyd–Steinberg, Schnell) oder `{lv}` 0–15 (Schön). Rahmen, Schrift, Schneidelinie immer schwarz. Comic und Umriss bleiben Schwarz-Weiß.
+- Drucken-Bildschirm: Auswahl „Schön“ (weiche Grautöne, Standard) / „Schnell“ (`S.quality`), nur beim MXW01. Vorschau, Gestalten und Kamera zeigen den gewählten Modus.
+- `printer.js`: A1 vor jedem Druck (Fehler → kindgerechte Meldung), Hitze 0–100, A9 mit `0x30`, Pakete/Pausen pro Modus (`pkFast/dlFast/pkHd/dlHd`), `hdFloor`, Status alle 60 s, Akku im Statuspunkt.
+- Einstellungen neu: `width` (auto = 384 beim MXW01), `heatFast` 70, `heatHD` 100. Alte Schlüssel aus 1.0.0 werden ignoriert. Druckbreite und Übertragung unter „Erweitert“.
+- Testdruck: Lineal + 16 Graustufen, einmal Schnell, einmal Schön, mit Erklärung im Eltern-Bereich.
+- Fertig-Fenster: „Zum Start“ (springt direkt zur Startseite) und „Nochmal drucken“.
+- „Meine Drucke“ speichert Graustufen-PNG; „Nochmal“ geht in beiden Modi.
+- Offen: Test am Android-Tablet (Übertragungswerte, Bildwirkung HD/Schnell, Feinschliff `hdFloor` und Helligkeit).
+
 ### Version 1.0.0 (Etappe 1) – gebaut, am Gerät teilweise getestet
 
 - **Start:** Kacheln Foto, Kamera und Text (Text als „bald“ gesperrt), Druckerstatus, letzte Drucke.
@@ -70,7 +88,7 @@ Befunde aus Testdrucken am 27.11.2026:
 - **Meine Drucke:** IndexedDB, max. 40 Einträge, „Nochmal“.
 - **Eltern-Bereich:** Zahnrad 2 s halten, dann Rechenaufgabe oder PIN. Enthält Drucker einrichten, Autoconnect, Druckbreite, Testdruck, Hitze je Papier und Obergrenze, Sticker-Größen, App-Name, Akzentfarbe, Version und „Jetzt aktualisieren“, PIN, Erweitert (Protokoll, Paketgröße, Pause, Bitreihenfolge, Vergessen, Log).
 
-### Bekannte Fehler in 1.0.0 (werden mit 1.1 behoben)
+### Bekannte Fehler in 1.0.0 (in 1.0.1 behoben)
 
 1. **Druckbreite:** Standard ist 576 px. Für MXW01 muss es 384 sein.
 2. **Hitze beim MXW01:** `printer.js` schickt bei `A2` den Wert `heat/100*255`. Erlaubt sind 0–100, deshalb druckt alles zu dunkel.
@@ -78,7 +96,9 @@ Befunde aus Testdrucken am 27.11.2026:
 4. **Übertragung:** Daten gehen in 128-Byte-Stücken statt zeilenweise.
 5. **Status:** A1-Status (Akku, Fehler) wird nicht ausgewertet.
 
-### Drucker-Labor (`labor/index.html`) – gebaut, am Gerät noch ungetestet
+### Drucker-Labor (`labor/index.html`) – am 27.11. am Mac mit dem Drucker getestet (Ergebnisse siehe Hardware-Tabelle)
+
+Seit 27.11. mit Einstellung „HD: A9-Zeilenbyte“ (Standard `0x30`), Klartext-Log für A9/AA und mindestens 90 s Wartezeit auf AA. Für HD Paketgröße 96 und Pause 30 einstellen.
 
 Mit simuliertem Drucker geprüft. Funktionen:
 - Verbinden (Filter `namePrefix: 'MXW'`) mit Status-Anzeige

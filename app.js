@@ -1,18 +1,23 @@
 /* Druckfrisch – App-Logik */
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.0.1';
 {
 const $ = id => document.getElementById(id);
 const $$ = s => document.querySelectorAll(s);
 
 /* ---------- Einstellungen ---------- */
-const DEFAULTS = { appName: 'Druckfrisch', accent: 'pink', heatRoll: 50, heatSticker: 65, heatMax: 80, sizes: [30, 50, 80], widthMode: '576', customWidth: 576, pin: '', lastMode: 'sticker' };
+// Neue Schlüssel ab 1.0.1 (width, heatFast, heatHD, quality); alte Werte aus 1.0.0 (widthMode, heatRoll …) werden ignoriert.
+const DEFAULTS = { appName: 'Druckfrisch', accent: 'pink', heatFast: 70, heatHD: 100, quality: 'hd', sizes: [30, 50, 80], width: 'auto', customWidth: 576, pin: '', lastMode: 'sticker' };
 const ACCENTS = { pink: ['#ff2d87', '#ffeaf4'], tuerkis: ['#19d3c5', '#e3faf8'], lila: ['#7a5af8', '#f0ebff'], blau: ['#2f5bff', '#e8eeff'] };
 const ACCENT_NAMES = { pink: 'Pink', tuerkis: 'Türkis', lila: 'Lila', blau: 'Blau' };
 let S = { ...DEFAULTS };
 try { S = { ...DEFAULTS, ...JSON.parse(localStorage.getItem('df_settings') || '{}') }; } catch {}
 const saveS = patch => { Object.assign(S, patch); try { localStorage.setItem('df_settings', JSON.stringify(S)); } catch {} };
-const printW = () => S.widthMode === 'custom' ? Math.max(128, Math.round((+S.customWidth || 576) / 8) * 8) : +S.widthMode;
+const printW = () => S.width === 'custom' ? Math.max(128, Math.round((+S.customWidth || 576) / 8) * 8) : S.width === 'auto' ? (Printer.model === 'mxw' ? 384 : 576) : +S.width;
 const dpiOf = w => w === 576 ? 300 : w === 384 ? 203 : Math.round(w * 25.4 / 48);
+// „Schön“ (4 Bit, 16 Graustufen) gibt es nur beim MXW01
+const canHD = () => Printer.model === 'mxw';
+const hdOn = () => canHD() && S.quality === 'hd';
+const view = (img, canvas) => Render.toCanvas(Render.forPrint(img, hdOn()), canvas);
 
 function applyLook() {
   const [a, t] = ACCENTS[S.accent] || ACCENTS.pink;
@@ -52,12 +57,29 @@ function enter(id) {
   if (id === 's-parents') fillParents();
 }
 function leave(id) { if (id === 's-camera') stopCam(); }
+// Direkt zurück zur Startseite, alle Schritte dazwischen fallen weg
+function home() {
+  const cur = stack[stack.length - 1];
+  if (cur === 's-start') return;
+  leave(cur); stack.length = 1;
+  $$('.screen').forEach(s => s.hidden = s.id !== 's-start');
+  window.scrollTo(0, 0);
+  enter('s-start');
+}
 $$('[data-back]').forEach(b => b.addEventListener('click', back));
 window.addEventListener('popstate', () => {});
 
 /* ---------- Druckerstatus ---------- */
+const PROBLEM = {
+  paper: 'Das Papier ist alle. Bitte neue Rolle einlegen.',
+  hot: 'Der Drucker ist zu warm. Kurz Pause machen, dann nochmal.',
+  battery: 'Der Drucker braucht Strom. Bitte aufladen.',
+  other: 'Der Drucker meldet ein Problem. Ist die Klappe zu?',
+};
+const PROBLEM_SHORT = { paper: 'Papier leer', hot: 'Drucker zu warm', battery: 'Akku leer', other: 'Drucker prüfen' };
 function paintStatus(st) {
-  const txt = st === 'ready' ? 'Drucker bereit' : st === 'connecting' ? 'Verbinde …' : Printer.configured ? 'Drucker aus' : 'Kein Drucker';
+  const inf = Printer.info, bat = inf.battery != null ? ` · Akku ${inf.battery} %` : '';
+  const txt = st === 'ready' ? (inf.err ? PROBLEM_SHORT[inf.err] : 'Drucker bereit' + bat) : st === 'connecting' ? 'Verbinde …' : Printer.configured ? 'Drucker aus' : 'Kein Drucker';
   $$('[data-status]').forEach(el => { el.dataset.state = st; el.querySelector('.txt').textContent = txt; });
   const d = $('p-dot'); if (d) d.className = 'dot ' + st;
 }
@@ -111,7 +133,7 @@ function camLoop() {
   if (stream && camView === 'print' && v.videoWidth) {
     const w = 240, h = Math.round(v.videoHeight * w / v.videoWidth), c = document.createElement('canvas');
     c.width = w; c.height = h; c.getContext('2d').drawImage(v, 0, 0, w, h);
-    Render.toCanvas(Render.compose({ img: c, width: w, frameId: 'none', look: 'foto', bright: 0 }), pc);
+    view(Render.compose({ img: c, width: w, frameId: 'none', look: 'foto', bright: 0 }), pc);
   }
   if (stream) camTimer = setTimeout(camLoop, 120);
 }
@@ -149,7 +171,7 @@ const comp = w => Render.compose({ img: ed.img, width: w, frameId: ed.frameId, c
 let renderT;
 function renderEdit() {
   clearTimeout(renderT);
-  renderT = setTimeout(() => { if (ed.img) Render.toCanvas(comp(printW()), $('editPreview')); }, 40);
+  renderT = setTimeout(() => { if (ed.img) view(comp(printW()), $('editPreview')); }, 40);
 }
 function syncEditorUI() {
   $$('#frames button').forEach(b => b.setAttribute('aria-pressed', b.dataset.frame === ed.frameId));
@@ -171,7 +193,7 @@ function renderLookThumbs() {
   const x = t.getContext('2d'), iw = ed.img.width, ih = ed.img.height, k = Math.max(120 / iw, 90 / ih);
   x.fillStyle = '#fff'; x.fillRect(0, 0, 120, 90);
   x.drawImage(ed.img, (120 - iw * k) / 2, (90 - ih * k) / 2, iw * k, ih * k);
-  $$('#looks button').forEach(b => Render.toCanvas(Render.compose({ img: t, width: 120, frameId: 'none', look: b.dataset.look, bright: 0 }), b.querySelector('canvas')));
+  $$('#looks button').forEach(b => view(Render.compose({ img: t, width: 120, frameId: 'none', look: b.dataset.look, bright: 0 }), b.querySelector('canvas')));
 }
 function selectTab(name) {
   $$('.tabs [data-tab]').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === name));
@@ -195,6 +217,8 @@ const pr = { comp: null, mode: S.lastMode, size: 1, count: 1 };
 function openPrint(compFn) { pr.comp = compFn; pr.count = 1; renderPrintUI(); show('s-print'); }
 function renderPrintUI() {
   $$('.choice').forEach(b => b.setAttribute('aria-pressed', b.dataset.mode === pr.mode));
+  $('quality-group').hidden = !canHD();
+  $$('[data-quality]').forEach(b => b.setAttribute('aria-pressed', b.dataset.quality === S.quality));
   const sizes = $('sizes'); sizes.innerHTML = '';
   ['Klein', 'Mittel', 'Groß'].forEach((n, i) => {
     const b = document.createElement('button'); b.type = 'button'; b.setAttribute('aria-pressed', i === pr.size);
@@ -207,9 +231,10 @@ function renderPrintUI() {
   $('count').textContent = pr.count;
   $('print-label').textContent = pr.mode === 'sticker' ? `${pr.count} Sticker drucken` : pr.count > 1 ? `${pr.count}× drucken` : 'Drucken';
   const W = printW();
-  requestAnimationFrame(() => Render.toCanvas(Render.layout(pr.comp, { mode: pr.mode, W, dpi: dpiOf(W), stickerMm: S.sizes[pr.size], count: Math.min(pr.count, 2) }), $('printPreview')));
+  requestAnimationFrame(() => view(Render.layout(pr.comp, { mode: pr.mode, W, dpi: dpiOf(W), stickerMm: S.sizes[pr.size], count: Math.min(pr.count, 2) }), $('printPreview')));
 }
 $$('.choice').forEach(b => b.addEventListener('click', () => { pr.mode = b.dataset.mode; saveS({ lastMode: pr.mode }); renderPrintUI(); }));
+$$('[data-quality]').forEach(b => b.addEventListener('click', () => { saveS({ quality: b.dataset.quality }); renderPrintUI(); }));
 $('minus').addEventListener('click', () => { pr.count = Math.max(1, pr.count - 1); renderPrintUI(); });
 $('plus').addEventListener('click', () => { pr.count = Math.min(9, pr.count + 1); renderPrintUI(); });
 
@@ -219,27 +244,30 @@ async function connectForPrint() {
   try { await Printer.ensure(); return true; }
   catch (e) { if (e.name !== 'NotFoundError') toast('Drucker nicht gefunden. Ist er eingeschaltet?'); return false; }
 }
-async function runPrint(img, heat, label) {
+// img: Ergebnis von Render.forPrint; done: true = Fertig-Fenster mit „Zum Start“ zeigen
+async function runPrint(img, heat, label, done = true) {
   const ov = $('printing'), prog = $('ov-prog');
-  $('ov-text').textContent = label || 'Druckt …'; $('ov-close').hidden = true; prog.hidden = false; prog.value = 0; ov.hidden = false;
+  $('ov-text').textContent = label || 'Druckt …'; $('ov-done').hidden = true; prog.hidden = false; prog.value = 0; ov.hidden = false;
   await nextFrame();
   try {
-    const W = img.w;
-    await Printer.print(img, { heat: Math.min(heat, S.heatMax), feed: Math.round(dpiOf(W) * 0.6), onProgress: p => prog.value = p });
+    await Printer.print(img, { heat, feed: Math.round(dpiOf(img.w) * 0.6), onProgress: p => prog.value = p });
+    if (!done) { ov.hidden = true; return true; }
     $('ov-text').textContent = 'Fertig! Abreißen und los geht’s.';
-    prog.hidden = true; $('ov-close').hidden = false; $('ov-close').focus();
+    prog.hidden = true; $('ov-done').hidden = false; $('ov-home').focus();
     return true;
   } catch (e) {
     ov.hidden = true;
-    toast(e.message === 'nicht verbunden' ? 'Die Verbindung ist abgebrochen. Bitte nochmal tippen.' : 'Das hat nicht geklappt: ' + e.message, 5000);
+    toast(e.code ? PROBLEM[e.code] : e.message === 'nicht verbunden' ? 'Die Verbindung ist abgebrochen. Bitte nochmal tippen.' : 'Das hat nicht geklappt: ' + e.message, 5000);
     return false;
   }
 }
-$('ov-close').addEventListener('click', () => { $('printing').hidden = true; });
+$('ov-home').addEventListener('click', () => { $('printing').hidden = true; home(); });
+$('ov-again').addEventListener('click', () => { $('printing').hidden = true; });
 $('do-print').addEventListener('click', async () => {
   if (!(await connectForPrint())) return;
-  const W = printW(), img = Render.layout(pr.comp, { mode: pr.mode, W, dpi: dpiOf(W), stickerMm: S.sizes[pr.size], count: pr.count });
-  const ok = await runPrint(img, pr.mode === 'sticker' ? S.heatSticker : S.heatRoll);
+  const W = printW(), hd = hdOn();
+  const img = Render.forPrint(Render.layout(pr.comp, { mode: pr.mode, W, dpi: dpiOf(W), stickerMm: S.sizes[pr.size], count: pr.count }), hd);
+  const ok = await runPrint(img, hd ? S.heatHD : S.heatFast, hd ? 'Druckt in Schön … das dauert etwas.' : 'Druckt …');
   if (ok) saveHistory(pr.comp(W), pr.mode).catch(() => {});
 });
 
@@ -257,20 +285,21 @@ async function saveHistory(img, mode) {
   const all = (await DB.all()).sort((a, b) => b.id - a.id);
   for (const old of all.slice(40)) await DB.del(old.id);
 }
-async function loadBits(blob) { const bm = await createImageBitmap(blob), c = document.createElement('canvas'); c.width = bm.width; c.height = bm.height; c.getContext('2d').drawImage(bm, 0, 0); return Render.fromCanvas(c); }
+// Gespeichert wird das Bild in Graustufen; alte Einträge aus 1.0.0 sind reines Schwarz-Weiß und gehen genauso
+async function loadImg(blob) { const bm = await createImageBitmap(blob), c = document.createElement('canvas'); c.width = bm.width; c.height = bm.height; const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height); x.drawImage(bm, 0, 0); return Render.fromCanvas(c); }
 async function historyItems() { try { return (await DB.all()).sort((a, b) => b.id - a.id); } catch { return []; } }
 function when(ts) {
   const d = new Date(ts), today = new Date(); const days = Math.round((new Date(today.toDateString()) - new Date(d.toDateString())) / 864e5);
   return days === 0 ? 'Heute' : days === 1 ? 'Gestern' : d.toLocaleDateString('de-DE', { weekday: 'long' });
 }
-async function reprint(item) { const bits = await loadBits(item.blob); pr.mode = item.mode || pr.mode; openPrint(w => Render.scaleBits(bits, w)); }
+async function reprint(item) { const img = await loadImg(item.blob); pr.mode = item.mode || pr.mode; openPrint(w => Render.scale(img, w)); }
 async function renderRecent() {
   const box = $('recent'), items = (await historyItems()).slice(0, 3);
   box.innerHTML = '';
   for (const it of items) {
     const b = document.createElement('button'); b.type = 'button'; b.className = 'thumb'; b.setAttribute('aria-label', 'Nochmal drucken vom ' + when(it.id));
     const c = document.createElement('canvas'); b.append(c); box.append(b);
-    loadBits(it.blob).then(bits => Render.toCanvas(bits, c));
+    loadImg(it.blob).then(img => Render.toCanvas(img, c));
     b.addEventListener('click', () => reprint(it));
   }
   const e = document.createElement('div'); e.className = 'thumb empty'; e.textContent = items.length ? 'Dein nächster Druck' : 'Hier landen deine Drucke'; box.append(e);
@@ -286,7 +315,7 @@ async function renderHistory() {
     const btn = document.createElement('button'); btn.type = 'button'; btn.className = 'chip'; btn.textContent = 'Nochmal';
     btn.addEventListener('click', () => reprint(it));
     row.append(s, btn); card.append(pic, row); box.append(card);
-    loadBits(it.blob).then(bits => Render.toCanvas(bits, c));
+    loadImg(it.blob).then(img => Render.toCanvas(img, c));
   }
 }
 $('to-history').addEventListener('click', () => show('s-history'));
@@ -317,13 +346,14 @@ $('gate-form').addEventListener('submit', e => {
 function fillParents() {
   const P = Printer.settings();
   $('p-name').textContent = P.name || 'Kein Drucker eingerichtet';
-  $('p-info').textContent = P.name ? `${Printer.state === 'ready' ? 'verbunden' : 'nicht verbunden'} · ${printW()} px · ${dpiOf(printW())} dpi` : 'Drucker einschalten, dann „Einrichten“ tippen';
+  const inf = Printer.info, extra = inf.battery != null ? ` · Akku ${inf.battery} %` + (inf.temp != null ? ` · ${inf.temp} °C` : '') : '';
+  $('p-info').textContent = P.name ? `${Printer.state === 'ready' ? 'verbunden' : 'nicht verbunden'} · ${printW()} px · ${dpiOf(printW())} dpi${extra}` : 'Drucker einschalten, dann „Einrichten“ tippen';
   $('p-setup').textContent = P.name ? 'Neu einrichten' : 'Einrichten';
   $('p-auto').checked = P.auto !== false;
   $('p-auto-hint').textContent = Printer.canAutoConnect() ? 'Kind sieht keine Geräteliste' : 'Beim Drucken erscheint nur dieser eine Drucker zur Auswahl';
-  $('p-width').value = S.widthMode; $('p-custom').value = S.customWidth; $('p-custom-row').hidden = S.widthMode !== 'custom';
-  for (const [k, id] of [['heatRoll', 'heat-roll'], ['heatSticker', 'heat-sticker'], ['heatMax', 'heat-max']]) { $('p-' + id).value = S[k]; $('o-' + id).textContent = S[k] + ' %'; }
-  $('p-heat-roll').max = $('p-heat-sticker').max = S.heatMax;
+  $('p-width').value = S.width; $('p-custom').value = S.customWidth; $('p-custom-row').hidden = S.width !== 'custom';
+  for (const [k, id] of HEATS) { $('p-' + id).value = S[k]; $('o-' + id).textContent = S[k]; }
+  $('p-heat-hd-row').hidden = !canHD();
   S.sizes.forEach((v, i) => $('p-s' + (i + 1)).value = v);
   $('p-appname').value = S.appName;
   const sw = $('p-swatches'); sw.innerHTML = '';
@@ -331,7 +361,9 @@ function fillParents() {
   $('p-version').textContent = APP_VERSION;
   $('p-pin').textContent = S.pin ? 'PIN ändern' : 'PIN festlegen';
   $('p-pin-hint').textContent = 'Zahnrad 2 Sekunden drücken, dann ' + (S.pin ? 'PIN' : 'Rechenaufgabe');
-  $('p-proto').value = P.proto || 'auto'; $('p-chunk').value = P.chunk || 128; $('p-delay').value = P.delay ?? 12; $('p-flip').checked = !!P.flip;
+  const tf = Printer.transfer(false), th = Printer.transfer(true);
+  $('p-proto').value = P.proto || 'auto'; $('p-flip').checked = !!P.flip;
+  $('p-pk-fast').value = tf.size; $('p-dl-fast').value = tf.dly; $('p-pk-hd').value = th.size; $('p-dl-hd').value = th.dly; $('p-hdfloor').value = P.hdFloor ?? 6;
   $('p-log').textContent = Printer.log() || 'Noch keine Meldungen.';
 }
 $('p-setup').addEventListener('click', async () => {
@@ -340,27 +372,28 @@ $('p-setup').addEventListener('click', async () => {
   fillParents();
 });
 $('p-auto').addEventListener('change', e => Printer.saveSettings({ auto: e.target.checked }));
-$('p-width').addEventListener('change', e => { saveS({ widthMode: e.target.value }); fillParents(); });
+$('p-width').addEventListener('change', e => { saveS({ width: e.target.value }); fillParents(); });
 $('p-custom').addEventListener('change', e => { saveS({ customWidth: +e.target.value }); fillParents(); });
+// Testdruck einmal pro Modus, jeweils mit der eingestellten Hitze
 $('p-test').addEventListener('click', async () => {
   if (!(await connectForPrint())) return;
-  const W = printW(); await runPrint(Render.testPattern(W, dpiOf(W)), S.heatRoll, 'Testdruck …'); fillParents();
+  const W = printW(), dpi = dpiOf(W);
+  const ok = await runPrint(Render.forPrint(Render.testPattern(W, dpi, `Schnell · Hitze ${S.heatFast} · ${W} px`), false), S.heatFast, 'Testdruck Schnell …', !canHD());
+  if (ok && canHD()) await runPrint(Render.forPrint(Render.testPattern(W, dpi, `Schön · Hitze ${S.heatHD} · ${W} px`), true), S.heatHD, 'Testdruck Schön …');
+  fillParents();
 });
-for (const [k, id] of [['heatRoll', 'heat-roll'], ['heatSticker', 'heat-sticker'], ['heatMax', 'heat-max']]) {
-  $('p-' + id).addEventListener('input', e => {
-    const v = +e.target.value; $('o-' + id).textContent = v + ' %';
-    const patch = { [k]: v };
-    if (k === 'heatMax') { patch.heatRoll = Math.min(S.heatRoll, v); patch.heatSticker = Math.min(S.heatSticker, v); }
-    saveS(patch);
-    if (k === 'heatMax') fillParents();
-  });
-}
+const HEATS = [['heatFast', 'heat-fast'], ['heatHD', 'heat-hd']];
+for (const [k, id] of HEATS) $('p-' + id).addEventListener('input', e => { const v = +e.target.value; $('o-' + id).textContent = v; saveS({ [k]: v }); });
 [1, 2, 3].forEach(i => $('p-s' + i).addEventListener('change', () => saveS({ sizes: [1, 2, 3].map(j => Math.max(15, Math.min(150, +$('p-s' + j).value || DEFAULTS.sizes[j - 1]))) })));
 $('p-appname').addEventListener('input', e => { saveS({ appName: e.target.value.trim() || 'Druckfrisch' }); applyLook(); });
 $('p-pin').addEventListener('click', () => openGate('setpin'));
 $('p-proto').addEventListener('change', e => Printer.saveSettings({ proto: e.target.value }));
-$('p-chunk').addEventListener('change', e => Printer.saveSettings({ chunk: Math.max(20, +e.target.value || 128) }));
-$('p-delay').addEventListener('change', e => Printer.saveSettings({ delay: Math.max(0, +e.target.value) }));
+const num = (v, lo, hi) => Math.max(lo, Math.min(hi, Math.round(+v || 0)));
+$('p-pk-fast').addEventListener('change', e => Printer.saveSettings({ pkFast: num(e.target.value, 20, 512) }));
+$('p-dl-fast').addEventListener('change', e => Printer.saveSettings({ dlFast: num(e.target.value, 0, 100) }));
+$('p-pk-hd').addEventListener('change', e => Printer.saveSettings({ pkHd: num(e.target.value, 20, 512) }));
+$('p-dl-hd').addEventListener('change', e => Printer.saveSettings({ dlHd: num(e.target.value, 0, 100) }));
+$('p-hdfloor').addEventListener('change', e => Printer.saveSettings({ hdFloor: num(e.target.value, 0, 14) }));
 $('p-flip').addEventListener('change', e => Printer.saveSettings({ flip: e.target.checked }));
 $('p-forget').addEventListener('click', () => { Printer.forget(); fillParents(); toast('Drucker vergessen. Zum Neu-Einrichten „Einrichten“ tippen.'); });
 $('p-update').addEventListener('click', async () => {

@@ -7,9 +7,12 @@ const Printer = (() => {
   const save = o => { try { localStorage.setItem(KEY, JSON.stringify({ ...load(), ...o })); } catch {} };
 
   let dev = null, chW = null, chN = null, chD = null, proto = 'gb';
-  let paused = false, waiters = [], wantConnected = false, retry = 0, retryTimer = null, connecting = null;
+  let paused = false, waiters = [], wantConnected = false, retry = 0, retryTimer = null, connecting = null, printing = false;
   const listeners = new Set();
   let state = 'off';
+  // MXW01-Status: Akku in %, Kopf-Temperatur, Fehler ('paper' | 'hot' | 'battery' | 'other' | null)
+  let info = { battery: null, temp: null, err: null };
+  const ERR = { 0x01: 'paper', 0x09: 'paper', 0x04: 'hot', 0x08: 'battery' };
   const logLines = [];
   const log = m => { logLines.push(new Date().toLocaleTimeString() + ' ' + m); if (logLines.length > 200) logLines.shift(); };
   const emit = s => { state = s; listeners.forEach(f => f(s)); };
@@ -34,8 +37,22 @@ const Printer = (() => {
   function waitFor(cmd, ms = 8000) {
     return new Promise((res, rej) => { const w = { cmd, res }; waiters.push(w); setTimeout(() => { waiters = waiters.filter(x => x !== w); rej(new Error('Keine Antwort vom Drucker')); }, ms); });
   }
+  // A1 abfragen (nur MXW01): Nutzdaten ab Byte 6 – [0] Zustand, [3] Akku, [4] Temperatur, [6] 0 = OK, [7] Fehlercode
+  async function status() {
+    if (proto !== 'mxw' || !chW) return info;
+    try {
+      const p = waitFor(0xa1, 3000);
+      await chW.writeValueWithoutResponse(Uint8Array.from(mx(0xa1, [0x00])));
+      const d = (await p).slice(6);
+      info = { battery: d[3] ?? null, temp: d[4] ?? null, err: d[6] ? (ERR[d[7]] || 'other') : null };
+      emit(state);
+    } catch (e) { log('Status: ' + e.message); }
+    return info;
+  }
+  setInterval(() => { if (state === 'ready' && !printing) status(); }, 60000);
+
   function onDisconnect() {
-    chW = null; log('getrennt'); emit('off');
+    chW = null; info = { battery: null, temp: null, err: null }; log('getrennt'); emit('off');
     if (wantConnected && dev && retry < 6) { clearTimeout(retryTimer); retryTimer = setTimeout(() => { retry++; attach(dev).catch(err => log('Wiederverbinden: ' + err.message)); }, 1500 + retry * 1500); }
   }
   async function attach(d) {
@@ -55,6 +72,7 @@ const Printer = (() => {
       chD = proto === 'mxw' ? await svc.getCharacteristic(id(0x03)) : null;
       save({ id: d.id, name: d.name || '' });
       retry = 0; wantConnected = true; log('bereit · Protokoll ' + proto); emit('ready');
+      if (proto === 'mxw') status();
     })();
     try { await connecting; } catch (e) { chW = null; emit('off'); throw e; } finally { connecting = null; }
   }
@@ -96,8 +114,16 @@ const Printer = (() => {
   }
 
   /* ---------- Drucken ---------- */
-  async function write(ch, bytes, onProgress) {
-    const cfg = load(), size = cfg.chunk || 128, dly = cfg.delay ?? 12, arr = Uint8Array.from(bytes);
+  // Paketgröße und Pause. MXW01 laut Labor (27.11.2026): Schnell 48 Byte / 12 ms,
+  // Schön 96 Byte / 30 ms – 192-Byte-Pakete kommen nicht an, zu schnell gehen Pakete verloren.
+  const model = () => { const c = load(); return c.proto && c.proto !== 'auto' ? c.proto : ((c.name || '').toUpperCase().startsWith('MXW') ? 'mxw' : 'gb'); };
+  function transfer(hd) {
+    const c = load(), m = chW ? proto : model();
+    if (hd) return { size: c.pkHd || 96, dly: c.dlHd ?? 30 };
+    return { size: c.pkFast || (m === 'mxw' ? 48 : 128), dly: c.dlFast ?? 12 };
+  }
+  async function write(ch, bytes, onProgress, { size, dly }) {
+    const arr = Uint8Array.from(bytes);
     for (let o = 0; o < arr.length; o += size) {
       let wait = 0; while (paused && wait++ < 500) await sleep(20);
       const part = arr.slice(o, o + size);
@@ -112,22 +138,43 @@ const Printer = (() => {
     return b;
   };
 
-  // img: {bits,w,h}; heat: 0..100 %; feed: Zeilen Vorschub
-  async function print(img, { heat = 50, feed = 100, onProgress } = {}) {
+  // 4 Bit: zwei Pixel pro Byte, linkes Pixel oben. Der Drucker zeigt die hellen Stufen kaum
+  // (Labor: bei Hitze 100 erst ab etwa Stufe 6), deshalb 1…15 auf hdFloor…15 legen, 0 bleibt weiß.
+  function rowNibbles(img, y, floor) {
+    const map = v => v ? Math.round(floor + (v - 1) * (15 - floor) / 14) : 0;
+    const b = new Uint8Array(img.w >> 1), o = y * img.w;
+    for (let x = 0; x < img.w; x += 2) b[x >> 1] = (map(img.lv[o + x]) << 4) | map(img.lv[o + x + 1]);
+    return b;
+  }
+  const problem = code => Object.assign(new Error('Drucker meldet ein Problem'), { code });
+
+  // img: {bits,w,h} (Schnell) oder {lv,w,h} (Schön, nur MXW01); heat: 0..100; feed: Zeilen Vorschub
+  async function print(img, { heat = 70, feed = 100, onProgress } = {}) {
     if (!chW) throw new Error('nicht verbunden');
-    const cfg = load(), flip = !!cfg.flip, n = img.w >> 3;
+    const cfg = load(), flip = !!cfg.flip;
+    let hd = !!img.lv;
+    if (hd && proto !== 'mxw') { img = { bits: img.lv.map(v => v >= 8 ? 1 : 0), w: img.w, h: img.h }; hd = false; }
+    const n = img.w >> 3;
     if (proto === 'mxw') {
-      const total = Math.max(90, img.h + feed), data = new Uint8Array(total * n);
-      for (let y = 0; y < img.h; y++) data.set(rowBytes(img, y, flip), y * n);
-      await chW.writeValueWithoutResponse(Uint8Array.from(mx(0xa2, [Math.round(heat / 100 * 255)])));
-      await sleep(50);
-      const ack = waitFor(0xa9);
-      await chW.writeValueWithoutResponse(Uint8Array.from(mx(0xa9, [total & 0xff, total >> 8, 0x30, 0x00])));
-      const r = await ack; if (r[6] !== 0) throw new Error('Drucker meldet ein Problem (Papier, Deckel oder Akku?)');
-      await write(chD, data, onProgress);
-      const done = waitFor(0xaa, 60000);
-      await chW.writeValueWithoutResponse(Uint8Array.from(mx(0xad, [0x00])));
-      await done.catch(e => log(e.message));
+      printing = true;
+      try {
+        const st = await status();
+        if (st.err) throw problem(st.err);
+        const bpl = hd ? img.w >> 1 : n, floor = Math.max(0, Math.min(14, cfg.hdFloor ?? 6));
+        const total = Math.max(90, img.h + feed), data = new Uint8Array(total * bpl);
+        for (let y = 0; y < img.h; y++) data.set(hd ? rowNibbles(img, y, floor) : rowBytes(img, y, flip), y * bpl);
+        await chW.writeValueWithoutResponse(Uint8Array.from(mx(0xa2, [Math.max(0, Math.min(100, Math.round(heat)))])));
+        await sleep(50);
+        const ack = waitFor(0xa9);
+        // Drittes Byte immer 0x30 (auch bei 4 Bit), Modus 0x00 = 1 Bit, 0x02 = 4 Bit
+        await chW.writeValueWithoutResponse(Uint8Array.from(mx(0xa9, [total & 0xff, total >> 8, 0x30, hd ? 0x02 : 0x00])));
+        const r = await ack; if (r[6] !== 0) throw problem('other');
+        log(`${total} Zeilen · ${hd ? 'Schön (4 Bit)' : 'Schnell (1 Bit)'} · Hitze ${Math.round(heat)}`);
+        await write(chD, data, onProgress, transfer(hd));
+        const done = waitFor(0xaa, Math.max(90000, 20000 + total * 80));
+        await chW.writeValueWithoutResponse(Uint8Array.from(mx(0xad, [0x00])));
+        await done.catch(e => log(e.message));
+      } finally { printing = false; setTimeout(status, 1500); }
       return;
     }
     const e = Math.round(0x1000 + heat / 100 * 0xb000), buf = [];
@@ -137,17 +184,19 @@ const Printer = (() => {
     const empty = new Uint8Array(n);
     for (let y = 0; y < feed; y++) buf.push(...gb(0xa2, empty));
     buf.push(...gb(0xa6, [0xaa, 0x55, 0x17, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x17]), ...gb(0xa3, [0x00]));
-    await write(chW, buf, onProgress);
+    await write(chW, buf, onProgress, transfer(false));
   }
 
   return {
     get state() { return state; },
+    get info() { return info; },
+    get model() { return chW ? proto : model(); },
     get name() { return load().name || ''; },
     get configured() { return !!load().name; },
     supported: () => !!navigator.bluetooth,
     canAutoConnect: () => !!(navigator.bluetooth && navigator.bluetooth.getDevices),
     on: f => { listeners.add(f); return () => listeners.delete(f); },
-    setup, autoConnect, ensure, print,
+    setup, autoConnect, ensure, print, status, transfer,
     settings: load, saveSettings: save,
     forget: () => { try { localStorage.removeItem(KEY); } catch {} wantConnected = false; if (dev && dev.gatt.connected) dev.gatt.disconnect(); dev = null; chW = null; emit('off'); },
     log: () => logLines.join('\n'),

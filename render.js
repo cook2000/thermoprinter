@@ -177,15 +177,38 @@ function outline(g, w, h, bright) {
   return out;
 }
 
+/* Bilder sind „Tinte“: Uint8Array 0 (weiß) … 255 (schwarz), {ink,w,h}.
+   Erst beim Drucken wird daraus 1 Bit (Schnell) oder 16 Stufen (Schön), siehe forPrint. */
+const bin = b => { const o = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) o[i] = b[i] ? 255 : 0; return o; };
+
 // look: 'foto' | 'comic' | 'umriss', bright: -50..50
 function process(data, w, h, look, bright) {
   const g = toGray(data, w * h);
   autoLevels(g);
-  if (look === 'umriss') return outline(g, w, h, bright);
+  if (look === 'umriss') return bin(outline(g, w, h, bright));
   const add = bright * 1.6;
   for (let i = 0; i < g.length; i++) g[i] += add;
-  if (look === 'comic') { contrast(g, 70); return errorDiffuse(g, w, h, true); }
-  return errorDiffuse(g, w, h, false);
+  if (look === 'comic') { contrast(g, 70); return bin(errorDiffuse(g, w, h, true)); }
+  const ink = new Uint8Array(w * h);
+  for (let i = 0; i < g.length; i++) ink[i] = Math.max(0, Math.min(255, Math.round(255 - g[i])));
+  return ink;
+}
+
+// Floyd–Steinberg auf `levels` Stufen; Ergebnis 0 … levels-1 (levels-1 = schwarz)
+function quantize(ink, w, h, levels) {
+  const f = Float32Array.from(ink), out = new Uint8Array(w * h), step = 255 / (levels - 1);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = y * w + x, o = f[i], q = Math.max(0, Math.min(levels - 1, Math.round(o / step)));
+    out[i] = q; const e = o - q * step;
+    if (!e) continue;
+    if (x + 1 < w) f[i + 1] += e * 7 / 16;
+    if (y + 1 < h) { if (x > 0) f[i + w - 1] += e * 3 / 16; f[i + w] += e * 5 / 16; if (x + 1 < w) f[i + w + 1] += e / 16; }
+  }
+  return out;
+}
+// Fürs Drucken und für die Vorschau: hd → {lv: 0…15}, sonst {bits: 0/1}
+function forPrint(img, hd) {
+  return hd ? { lv: quantize(img.ink, img.w, img.h, 16), w: img.w, h: img.h } : { bits: quantize(img.ink, img.w, img.h, 2), w: img.w, h: img.h };
 }
 
 // Bild + Rahmen + Beschriftung in Druckbreite `width` (Pixel) zusammensetzen
@@ -216,28 +239,29 @@ function compose({ img, width, frameId, caption, look, bright }) {
     fx.fillText(cap, g.l + cwl / 2, y0 + capH / 2 + 2);
   }
   fx.restore();
-  const fd = fx.getImageData(0, 0, width, H).data, bits = new Uint8Array(width * H);
-  for (let i = 0; i < width * H; i++) bits[i] = fd[i * 4] < 128 ? 1 : 0;
+  // Rahmen und Schrift immer voll schwarz, Foto mit Graustufen
+  const fd = fx.getImageData(0, 0, width, H).data, ink = new Uint8Array(width * H);
+  for (let i = 0; i < width * H; i++) ink[i] = fd[i * 4] < 128 ? 255 : 0;
   const ox = Math.round(g.l * s), oy = Math.round(g.t * s), cwi = Math.min(cw, width - ox);
-  for (let y = 0; y < ch && y + oy < H; y++) bits.set(content.subarray(y * cw, y * cw + cwi), (y + oy) * width + ox);
-  return { bits, w: width, h: H };
+  for (let y = 0; y < ch && y + oy < H; y++) ink.set(content.subarray(y * cw, y * cw + cwi), (y + oy) * width + ox);
+  return { ink, w: width, h: H };
 }
 
-// 1-Bit-Bild auf andere Breite skalieren (nächster Nachbar) – für „Nochmal drucken“
-function scaleBits(src, width) {
+// Bild auf andere Breite skalieren (nächster Nachbar) – für „Nochmal drucken“
+function scale(src, width) {
   if (src.w === width) return src;
-  const k = src.w / width, h = Math.max(1, Math.round(src.h / k)), bits = new Uint8Array(width * h);
-  for (let y = 0; y < h; y++) { const sy = Math.min(src.h - 1, (y * k) | 0); for (let x = 0; x < width; x++) bits[y * width + x] = src.bits[sy * src.w + Math.min(src.w - 1, (x * k) | 0)]; }
-  return { bits, w: width, h };
+  const k = src.w / width, h = Math.max(1, Math.round(src.h / k)), ink = new Uint8Array(width * h);
+  for (let y = 0; y < h; y++) { const sy = Math.min(src.h - 1, (y * k) | 0); for (let x = 0; x < width; x++) ink[y * width + x] = src.ink[sy * src.w + Math.min(src.w - 1, (x * k) | 0)]; }
+  return { ink, w: width, h };
 }
 
 // Drucklayout: Rolle oder Sticker, mehrfach, mit Schneidelinien
-// comp(width) liefert {bits,w,h}; opts: {mode, W, dpi, stickerMm, count}
+// comp(width) liefert {ink,w,h}; opts: {mode, W, dpi, stickerMm, count}
 function layout(comp, { mode, W, dpi, stickerMm, count }) {
   const parts = [];
-  const blank = n => ({ bits: new Uint8Array(W * n), w: W, h: n });
-  const cut = () => { const n = Math.max(2, Math.round(dpi / 100)), b = new Uint8Array(W * n), seg = Math.round(dpi / 12); for (let y = 0; y < n; y++) for (let x = 0; x < W; x++) if ((x % (seg * 2)) < seg) b[y * W + x] = 1; return { bits: b, w: W, h: n }; };
-  const pad = (img, w) => { if (img.w === w) return img; const out = new Uint8Array(w * img.h), ox = (w - img.w) >> 1; for (let y = 0; y < img.h; y++) out.set(img.bits.subarray(y * img.w, (y + 1) * img.w), y * w + ox); return { bits: out, w, h: img.h }; };
+  const blank = n => ({ ink: new Uint8Array(W * n), w: W, h: n });
+  const cut = () => { const n = Math.max(2, Math.round(dpi / 100)), b = new Uint8Array(W * n), seg = Math.round(dpi / 12); for (let y = 0; y < n; y++) for (let x = 0; x < W; x++) if ((x % (seg * 2)) < seg) b[y * W + x] = 255; return { ink: b, w: W, h: n }; };
+  const pad = (img, w) => { if (img.w === w) return img; const out = new Uint8Array(w * img.h), ox = (w - img.w) >> 1; for (let y = 0; y < img.h; y++) out.set(img.ink.subarray(y * img.w, (y + 1) * img.w), y * w + ox); return { ink: out, w, h: img.h }; };
   if (mode === 'sticker') {
     const L = Math.round(stickerMm / 25.4 * dpi), m = Math.round(2 / 25.4 * dpi), avail = L - 2 * m;
     let img = comp(W);
@@ -250,21 +274,23 @@ function layout(comp, { mode, W, dpi, stickerMm, count }) {
     const img = comp(W), gap = Math.round(dpi / 8);
     for (let i = 0; i < count; i++) { if (i) parts.push(blank(gap), cut(), blank(gap)); parts.push(img); }
   }
-  const H = parts.reduce((a, p) => a + p.h, 0), bits = new Uint8Array(W * H);
-  let o = 0; for (const p of parts) { bits.set(p.bits, o * W); o += p.h; }
-  return { bits, w: W, h: H };
+  const H = parts.reduce((a, p) => a + p.h, 0), ink = new Uint8Array(W * H);
+  let o = 0; for (const p of parts) { ink.set(p.ink, o * W); o += p.h; }
+  return { ink, w: W, h: H };
 }
 
-function toCanvas({ bits, w, h }, canvas, ink = [29, 27, 24]) {
-  canvas.width = w; canvas.height = h;
+// Anzeigen: {ink} (0…255), {lv} (0…15) oder {bits} (0/1)
+function toCanvas(img, canvas, ink = [29, 27, 24]) {
+  const { w, h } = img; canvas.width = w; canvas.height = h;
   const c = canvas.getContext('2d'), im = c.createImageData(w, h);
-  for (let i = 0; i < w * h; i++) { const on = bits[i]; im.data[i * 4] = on ? ink[0] : 255; im.data[i * 4 + 1] = on ? ink[1] : 255; im.data[i * 4 + 2] = on ? ink[2] : 255; im.data[i * 4 + 3] = 255; }
+  const t = img.bits ? i => img.bits[i] : img.lv ? i => img.lv[i] / 15 : i => img.ink[i] / 255;
+  for (let i = 0; i < w * h; i++) { const k = t(i); for (let j = 0; j < 3; j++) im.data[i * 4 + j] = Math.round(255 - k * (255 - ink[j])); im.data[i * 4 + 3] = 255; }
   c.putImageData(im, 0, 0); return canvas;
 }
 function fromCanvas(canvas) {
-  const { width: w, height: h } = canvas, d = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data, bits = new Uint8Array(w * h);
-  for (let i = 0; i < w * h; i++) bits[i] = d[i * 4] < 128 ? 1 : 0;
-  return { bits, w, h };
+  const { width: w, height: h } = canvas, d = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data, ink = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) ink[i] = 255 - d[i * 4];
+  return { ink, w, h };
 }
 
 function frameThumb(F, size = 120) {
@@ -276,19 +302,19 @@ function frameThumb(F, size = 120) {
   return c;
 }
 
-// Testdruck: Lineal, Graustufen, Schneidelinie – zum Ermitteln der Druckbreite
-function testPattern(W, dpi) {
-  const H = Math.round(dpi * 0.9), c = document.createElement('canvas'); c.width = W; c.height = H;
+// Testdruck: Überschrift, Lineal, 16 Graustufen – zum Prüfen von Breite und Hitze
+function testPattern(W, dpi, title) {
+  const H = Math.round(dpi * 0.8), c = document.createElement('canvas'); c.width = W; c.height = H;
   const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, W, H); x.fillStyle = '#000';
-  for (let px = 0; px < W; px += 8) { const big = px % 64 === 0; x.fillRect(px, 0, 2, big ? 34 : 14); if (big) { x.font = '700 16px sans-serif'; x.fillText(String(px), px + 3, 52); } }
-  x.fillRect(W - 3, 0, 3, H);
-  x.font = '800 22px sans-serif'; x.fillText(`Breite ${W} px · ${dpi} dpi`, 8, 90);
-  for (let i = 0; i < 8; i++) { x.fillStyle = `rgb(${i * 36},${i * 36},${i * 36})`; x.fillRect(8 + i * (W - 16) / 8, 110, (W - 16) / 8, 40); }
-  const img = fromCanvas(c);
-  const g = toGray(x.getImageData(0, 0, W, H).data, W * H);
-  const dith = errorDiffuse(g, W, H, false);
-  return { bits: dith, w: W, h: H };
+  x.font = '800 20px sans-serif'; x.fillText(title || `Breite ${W} px · ${dpi} dpi`, 6, 22);
+  for (let px = 0; px < W; px += 8) { const big = px % 64 === 0; x.fillRect(px, 30, 2, big ? 22 : 10); if (big) { x.font = '700 12px sans-serif'; x.fillText(String(px), px + 3, 66); } }
+  x.fillRect(W - 2, 30, 2, 30);
+  const sw = W / 16;
+  for (let i = 0; i < 16; i++) { const v = Math.round(255 - i * 17); x.fillStyle = `rgb(${v},${v},${v})`; x.fillRect(Math.round(i * sw), 76, Math.ceil(sw), 50); }
+  x.fillStyle = '#000'; x.font = '700 12px sans-serif';
+  for (let i = 0; i < 16; i += 3) x.fillText(String(i), i * sw + sw / 2 - 4, 142);
+  return fromCanvas(c);
 }
 
-return { FRAMES, compose, scaleBits, layout, toCanvas, fromCanvas, frameThumb, testPattern };
+return { FRAMES, compose, scale, layout, forPrint, toCanvas, fromCanvas, frameThumb, testPattern };
 })();
