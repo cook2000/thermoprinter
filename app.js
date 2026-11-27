@@ -1,5 +1,5 @@
 /* Druckfrisch – App-Logik */
-const APP_VERSION = '1.0.2';
+const APP_VERSION = '1.0.4';
 {
 const $ = id => document.getElementById(id);
 const $$ = s => document.querySelectorAll(s);
@@ -17,7 +17,9 @@ const dpiOf = w => w === 576 ? 300 : w === 384 ? 203 : Math.round(w * 25.4 / 48)
 // „Schön“ (4 Bit, 16 Graustufen) gibt es nur beim MXW01
 const canHD = () => Printer.model === 'mxw';
 const hdOn = () => canHD() && S.quality === 'hd';
-const view = (img, canvas) => Render.toCanvas(Render.forPrint(img, hdOn()), canvas);
+const hdFloor = () => Printer.settings().hdFloor ?? 6;
+const hdGamma = () => Printer.settings().hdGamma ?? 0.6;
+const view = (img, canvas) => Render.toCanvas(Render.forPrint(img, hdOn(), hdFloor(), hdGamma()), canvas);
 
 function applyLook() {
   const [a, t] = ACCENTS[S.accent] || ACCENTS.pink;
@@ -269,7 +271,7 @@ $('ov-again').addEventListener('click', () => { $('printing').hidden = true; });
 $('do-print').addEventListener('click', async () => {
   if (!(await connectForPrint())) return;
   const W = printW(), hd = hdOn();
-  const img = Render.forPrint(Render.layout(pr.comp, { mode: pr.mode, W, dpi: dpiOf(W), stickerMm: S.sizes[pr.size], count: pr.count }), hd);
+  const img = Render.forPrint(Render.layout(pr.comp, { mode: pr.mode, W, dpi: dpiOf(W), stickerMm: S.sizes[pr.size], count: pr.count }), hd, hdFloor(), hdGamma());
   const ok = await runPrint(img, hd ? S.heatHD : S.heatFast, hd ? 'Druckt in Schön … das dauert etwas.' : 'Druckt …');
   if (ok) saveHistory(pr.comp(W), pr.mode).catch(() => {});
 });
@@ -366,7 +368,7 @@ function fillParents() {
   $('p-pin-hint').textContent = 'Zahnrad 2 Sekunden drücken, dann ' + (S.pin ? 'PIN' : 'Rechenaufgabe');
   const tf = Printer.transfer(false), th = Printer.transfer(true);
   $('p-proto').value = P.proto || 'auto'; $('p-flip').checked = !!P.flip;
-  $('p-pk-fast').value = tf.size; $('p-dl-fast').value = tf.dly; $('p-pk-hd').value = th.size; $('p-dl-hd').value = th.dly; $('p-hdfloor').value = P.hdFloor ?? 6;
+  $('p-pk-fast').value = tf.size; $('p-dl-fast').value = tf.dly; $('p-pk-hd').value = th.size; $('p-dl-hd').value = th.dly; $('p-hdfloor').value = P.hdFloor ?? 6; $('p-hdgamma').value = P.hdGamma ?? 0.6;
   $('p-log').textContent = Printer.log() || 'Noch keine Meldungen.';
 }
 $('p-setup').addEventListener('click', async () => {
@@ -382,7 +384,7 @@ $('p-test').addEventListener('click', async () => {
   if (!(await connectForPrint())) return;
   const W = printW(), dpi = dpiOf(W);
   const ok = await runPrint(Render.forPrint(Render.testPattern(W, dpi, `Schnell · Hitze ${S.heatFast} · ${W} px`), false), S.heatFast, 'Testdruck Schnell …', !canHD());
-  if (ok && canHD()) await runPrint(Render.forPrint(Render.testPattern(W, dpi, `Schön · Hitze ${S.heatHD} · ${W} px`), true), S.heatHD, 'Testdruck Schön …');
+  if (ok && canHD()) await runPrint(Render.forPrint(Render.testPattern(W, dpi, `Schön · Hitze ${S.heatHD} · ${W} px`), true, hdFloor(), hdGamma()), S.heatHD, 'Testdruck Schön …');
   fillParents();
 });
 const HEATS = [['heatFast', 'heat-fast'], ['heatHD', 'heat-hd']];
@@ -396,7 +398,11 @@ $('p-pk-fast').addEventListener('change', e => Printer.saveSettings({ pkFast: nu
 $('p-dl-fast').addEventListener('change', e => Printer.saveSettings({ dlFast: num(e.target.value, 0, 100) }));
 $('p-pk-hd').addEventListener('change', e => Printer.saveSettings({ pkHd: num(e.target.value, 20, 512) }));
 $('p-dl-hd').addEventListener('change', e => Printer.saveSettings({ dlHd: num(e.target.value, 0, 100) }));
-$('p-hdfloor').addEventListener('change', e => Printer.saveSettings({ hdFloor: num(e.target.value, 0, 14) }));
+$('p-hdfloor').addEventListener('change', e => Printer.saveSettings({ hdFloor: num(e.target.value, 1, 14) }));
+$('p-hdgamma').addEventListener('change', e => {
+  const v = parseFloat(String(e.target.value).replace(',', '.'));
+  Printer.saveSettings({ hdGamma: Math.max(0.3, Math.min(1.5, Math.round((v || 0.6) * 100) / 100)) });
+});
 $('p-flip').addEventListener('change', e => Printer.saveSettings({ flip: e.target.checked }));
 $('p-forget').addEventListener('click', () => { Printer.forget(); fillParents(); toast('Drucker vergessen. Zum Neu-Einrichten „Einrichten“ tippen.'); });
 $('p-update').addEventListener('click', async () => {

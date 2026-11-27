@@ -206,9 +206,38 @@ function quantize(ink, w, h, levels) {
   }
   return out;
 }
-// Fürs Drucken und für die Vorschau: hd → {lv: 0…15}, sonst {bits: 0/1}
-function forPrint(img, hd) {
-  return hd ? { lv: quantize(img.ink, img.w, img.h, 16), w: img.w, h: img.h } : { bits: quantize(img.ink, img.w, img.h, 2), w: img.w, h: img.h };
+// Schön (4 Bit): Der MXW01 druckt Stufe 1 … floor-1 kaum sichtbar. Nutzbar sind also nur 0 (weiß) und floor … 15.
+// Diese Stufen bekommen eine gleichmäßige Helligkeit; hellere Töne werden zwischen Weiß und floor gerastert
+// (sanfter Übergang statt Sprung auf Grau). Fast-Weiß (Tinte < 16) bleibt papierweiß.
+// gamma: Die Stufen werden schneller dunkel als linear (Tablet-Druck 27.11.: Mitteltöne zu dunkel).
+// Angenommene Dunkelheit einer Stufe = t^gamma; kleiner = Mitteltöne heller. Standard 0,6.
+const darkOf = (L, floor, gamma = 1) => L ? Math.pow((L - floor + 1) / (16 - floor), gamma) : 0;
+function quantizeHD(ink, w, h, floor, gamma) {
+  const f = new Float32Array(w * h), out = new Uint8Array(w * h), n = 16 - floor, first = darkOf(floor, floor, gamma);
+  for (let i = 0; i < f.length; i++) f[i] = ink[i] / 255;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = y * w + x;
+    if (ink[i] < 16) continue; // bleibt weiß, Fehler wird verworfen
+    const v = f[i];
+    let L = 0;
+    if (v > first / 2) {
+      // nächstgelegene Stufe nach angenommener Dunkelheit
+      const g = Math.max(floor, Math.min(15, Math.round(Math.pow(Math.max(0, v), 1 / gamma) * n) + floor - 1));
+      L = g;
+      for (const c of [g - 1, g + 1]) if (c >= floor && c <= 15 && Math.abs(v - darkOf(c, floor, gamma)) < Math.abs(v - darkOf(L, floor, gamma))) L = c;
+    }
+    out[i] = L; const e = v - darkOf(L, floor, gamma);
+    if (!e) continue;
+    if (x + 1 < w) f[i + 1] += e * 7 / 16;
+    if (y + 1 < h) { if (x > 0) f[i + w - 1] += e * 3 / 16; f[i + w] += e * 5 / 16; if (x + 1 < w) f[i + w + 1] += e / 16; }
+  }
+  return out;
+}
+// Fürs Drucken und für die Vorschau: hd → {lv: Druckerstufen 0, floor…15}, sonst {bits: 0/1}
+function forPrint(img, hd, floor = 6, gamma = 0.6) {
+  if (!hd) return { bits: quantize(img.ink, img.w, img.h, 2), w: img.w, h: img.h };
+  floor = Math.max(1, Math.min(14, floor)); gamma = Math.max(0.3, Math.min(1.5, gamma));
+  return { lv: quantizeHD(img.ink, img.w, img.h, floor, gamma), floor, gamma, w: img.w, h: img.h };
 }
 
 // Bild + Rahmen + Beschriftung in Druckbreite `width` (Pixel) zusammensetzen
@@ -283,7 +312,7 @@ function layout(comp, { mode, W, dpi, stickerMm, count }) {
 function toCanvas(img, canvas, ink = [29, 27, 24]) {
   const { w, h } = img; canvas.width = w; canvas.height = h;
   const c = canvas.getContext('2d'), im = c.createImageData(w, h);
-  const t = img.bits ? i => img.bits[i] : img.lv ? i => img.lv[i] / 15 : i => img.ink[i] / 255;
+  const t = img.bits ? i => img.bits[i] : img.lv ? (img.floor ? i => darkOf(img.lv[i], img.floor, img.gamma) : i => img.lv[i] / 15) : i => img.ink[i] / 255;
   for (let i = 0; i < w * h; i++) { const k = t(i); for (let j = 0; j < 3; j++) im.data[i * 4 + j] = Math.round(255 - k * (255 - ink[j])); im.data[i * 4 + 3] = 255; }
   c.putImageData(im, 0, 0); return canvas;
 }

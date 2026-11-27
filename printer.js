@@ -143,12 +143,11 @@ const Printer = (() => {
     return b;
   };
 
-  // 4 Bit: zwei Pixel pro Byte, linkes Pixel oben. Der Drucker zeigt die hellen Stufen kaum
-  // (Labor: bei Hitze 100 erst ab etwa Stufe 6), deshalb 1…15 auf hdFloor…15 legen, 0 bleibt weiß.
-  function rowNibbles(img, y, floor) {
-    const map = v => v ? Math.round(floor + (v - 1) * (15 - floor) / 14) : 0;
+  // 4 Bit: zwei Pixel pro Byte, linkes Pixel oben, 15 = schwarz.
+  // img.lv enthält schon Druckerstufen (Render.forPrint legt sie auf 0 und hdFloor…15).
+  function rowNibbles(img, y) {
     const b = new Uint8Array(img.w >> 1), o = y * img.w;
-    for (let x = 0; x < img.w; x += 2) b[x >> 1] = (map(img.lv[o + x]) << 4) | map(img.lv[o + x + 1]);
+    for (let x = 0; x < img.w; x += 2) b[x >> 1] = (img.lv[o + x] << 4) | img.lv[o + x + 1];
     return b;
   }
   const problem = code => Object.assign(new Error('Drucker meldet ein Problem'), { code });
@@ -165,9 +164,9 @@ const Printer = (() => {
       try {
         const st = await status();
         if (st.err) throw problem(st.err);
-        const bpl = hd ? img.w >> 1 : n, floor = Math.max(0, Math.min(14, cfg.hdFloor ?? 6));
+        const bpl = hd ? img.w >> 1 : n;
         const total = Math.max(90, img.h + feed), data = new Uint8Array(total * bpl);
-        for (let y = 0; y < img.h; y++) data.set(hd ? rowNibbles(img, y, floor) : rowBytes(img, y, flip), y * bpl);
+        for (let y = 0; y < img.h; y++) data.set(hd ? rowNibbles(img, y) : rowBytes(img, y, flip), y * bpl);
         await chW.writeValueWithoutResponse(Uint8Array.from(mx(0xa2, [Math.max(0, Math.min(100, Math.round(heat)))])));
         await sleep(50);
         const ack = waitFor(0xa9);

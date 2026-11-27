@@ -70,7 +70,16 @@ Befunde aus Testdrucken am 27.11.2026:
 
 **Arbeitsweise seit 27.11.:** Kein Git. Holger kopiert die Dateien manuell nach GitHub. Nach Änderungen sagen, welche Dateien hochzuladen sind. Version 1.1.0 erst, wenn am Tablet alles passt; Zwischenstände 1.0.x.
 
-### Version 1.0.2 (27.11.2026) – gebaut, mit simuliertem Drucker getestet
+### Version 1.0.3 (27.11.2026) – gebaut, nicht am Gerät getestet
+
+- Schön: `Render.forPrint(img, true, hdFloor)` rastert direkt auf die Druckerstufen 0 und `hdFloor`…15 (Floyd–Steinberg mit Palette). Tinte < 16 bleibt papierweiß, sehr helle Töne werden zwischen Weiß und `hdFloor` gerastert (kein grauer Hintergrund mehr). `printer.js` packt nur noch. Vorschau zeigt die Druckerstufen mit ihrer angenommenen Helligkeit.
+- Rückmeldung Holger nach 1.0.2-Druck: Schön wird in den Mitteltönen schnell dunkel (Augen besser bei Schnell).
+
+### Version 1.0.4 (27.11.2026) – gebaut, nicht am Gerät getestet
+
+- Schön: Mitteltöne heller. Angenommene Dunkelheit einer Druckerstufe = t^`hdGamma` (Standard 0,6, unter „Erweitert“ „Schön: Mitteltöne“, 0,3–1,5). Wirkung bei hdFloor 6: Tinte 64 → Stufe 6 (vorher 8), 128 → 8 (vorher 10), 192 → 11 (vorher 13); Weiß und Schwarz unverändert.
+
+### Version 1.0.2 (27.11.2026) – am Tablet getestet: beide Modi vollständig, Balken/Fenster ok
 
 Nach dem ersten Tablet-Test von 1.0.1 (beide Modi drucken; Schön war bei 96/30 abgeschnitten, Fenster blieb offen, Balken hinkte):
 - Standard Schön: 96 Byte / 10 ms. Flusskontrolle über `AE` (max. 3 s warten).
