@@ -98,6 +98,20 @@ small{display:block;font-size:15px;color:var(--mute);font-weight:400}
 .sticker-grid button{aspect-ratio:1;border:3px solid var(--line);border-radius:18px;background:#fff;padding:10px;display:grid;place-items:center}
 .sticker-grid button:active{border-color:var(--acc);background:var(--acc-tint)}
 .sticker-grid img{width:100%;height:100%;object-fit:contain}
+.text-row{display:flex;gap:12px;align-items:flex-end}
+.text-row .grow{flex:1;min-width:0}
+.text-row .btn{flex:none}
+.fonts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.fonts button{min-height:72px;border:3px solid var(--line);border-radius:18px;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:6px}
+.fonts button b{font-size:26px;font-weight:400;line-height:1.2;white-space:nowrap}
+.fonts button small{font-size:13px;color:var(--mute);font-weight:600}
+.fonts button[aria-pressed=true],.effects button[aria-pressed=true]{border:4px solid var(--acc);padding:5px;background:var(--acc-tint)}
+.effects{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.effects button{min-height:64px;border:3px solid var(--line);border-radius:18px;background:#fff;display:flex;align-items:center;justify-content:center;gap:10px;font-size:17px;font-weight:600;padding:6px}
+.effects span{font:400 26px Bangers,system-ui,sans-serif;padding:0 6px;border-radius:6px}
+.fx-umriss{color:#fff;-webkit-text-stroke:2px #000;paint-order:stroke fill}
+.fx-negativ{background:#000;color:#fff}
+.small-a{font-size:15px;text-align:center}.big-a{font-size:30px;text-align:center}
 .paper.small{width:min(230px,40vw);padding:10px 0;max-height:420px;overflow:hidden}
 .panel{background:#fff;border-radius:36px 36px 0 0;padding:24px clamp(16px,4vw,36px) max(32px,env(safe-area-inset-bottom));margin:0 calc(-1*clamp(16px,5vw,44px));display:flex;flex-direction:column;gap:20px;box-shadow:0 -8px 30px rgba(29,27,24,.06)}
 .panel>[data-pane]{display:flex;flex-direction:column;gap:20px}

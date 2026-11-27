@@ -1,5 +1,5 @@
 /* Druckfrisch – App-Logik */
-const APP_VERSION = '1.1.1';
+const APP_VERSION = '1.1.2';
 {
 const $ = id => document.getElementById(id);
 const $$ = s => document.querySelectorAll(s);
@@ -161,13 +161,13 @@ const snap = () => ({ frameId: ed.frameId, caption: ed.caption, look: ed.look, b
 function pushUndo() { undoStack.push(snap()); if (undoStack.length > 40) undoStack.shift(); $('undo').disabled = false; }
 $('undo').addEventListener('click', () => {
   const s = undoStack.pop(); if (!s) return;
-  Object.assign(ed, s); ed.sel = -1; $('undo').disabled = !undoStack.length; syncEditorUI(); renderEdit();
+  Object.assign(ed, s); ed.sel = -1; $('undo').disabled = !undoStack.length; syncEditorUI(); syncTextUI(); renderEdit();
 });
 
 function openEditor(img) {
   Object.assign(ed, { img, frameId: 'none', caption: '', look: 'foto', bright: 0, items: [], sel: -1 });
   undoStack.length = 0; $('undo').disabled = true;
-  syncEditorUI(); selectTab('frame'); renderLookThumbs();
+  syncEditorUI(); syncTextUI(); selectTab('frame'); renderLookThumbs();
   show('s-editor', stack[stack.length - 1] === 's-camera');
   renderEdit();
 }
@@ -212,16 +212,76 @@ function addSticker(id) {
 function placeSel() {
   const box = $('sel'), it = ed.items[ed.sel], c = $('editPreview');
   if (!it || !c.width) { box.hidden = true; return; }
-  const k = c.clientWidth / 384, size = it.s * k + 12;
+  const k = c.clientWidth / 384, d = Render.itemSize(it), w = d.w * k + 12, h = d.h * k + 12;
   box.hidden = false;
-  box.style.width = box.style.height = size + 'px';
-  box.style.transform = `translate(${c.offsetLeft + it.x * k - size / 2}px, ${c.offsetTop + it.y * k - size / 2}px) rotate(${it.r}rad)`;
+  box.style.width = w + 'px'; box.style.height = h + 'px';
+  box.style.transform = `translate(${c.offsetLeft + it.x * k - w / 2}px, ${c.offsetTop + it.y * k - h / 2}px) rotate(${it.r}rad)`;
 }
 $('sel-del').addEventListener('click', e => {
   e.stopPropagation();
   if (ed.sel < 0) return;
-  pushUndo(); ed.items.splice(ed.sel, 1); ed.sel = -1; renderEdit();
+  pushUndo(); ed.items.splice(ed.sel, 1); ed.sel = -1; syncTextUI(); renderEdit();
 });
+
+/* ---------- Text ---------- */
+// Vorgaben für den nächsten Text; ein ausgewählter Text übernimmt Änderungen sofort
+const txt = { font: 'Bangers', fx: 'normal', s: 56 };
+const selText = () => { const it = ed.items[ed.sel]; return it && it.kind === 'text' ? it : null; };
+function buildText() {
+  const box = $('fonts'); box.innerHTML = '';
+  for (const f of Render.FONTS) {
+    const b = document.createElement('button'); b.type = 'button'; b.dataset.font = f.id;
+    b.innerHTML = `<b style="font-family:'${f.id}',system-ui;font-size:${Math.round(26 * (f.k || 1))}px">Abc</b><small>${f.name}</small>`;
+    b.addEventListener('click', () => setTextStyle({ font: f.id }));
+    box.append(b);
+  }
+}
+function syncTextUI() {
+  const t = selText();
+  if (t) Object.assign(txt, { font: t.font, fx: t.fx, s: t.s });
+  if (document.activeElement !== $('text-in')) $('text-in').value = t ? t.text : '';
+  $$('#fonts button').forEach(b => b.setAttribute('aria-pressed', b.dataset.font === txt.font));
+  $$('#effects button').forEach(b => b.setAttribute('aria-pressed', b.dataset.fx === txt.fx));
+  $('text-size').value = Math.max(16, Math.min(160, Math.round(txt.s)));
+}
+function setTextStyle(patch) {
+  const t = selText();
+  if (t) { pushUndo(); Object.assign(t, patch); fitText(t); renderEdit(); }
+  Object.assign(txt, patch); syncTextUI();
+}
+// Zu breiter Text wird kleiner, damit er aufs Papier passt (nur verkleinern)
+function fitText(it) { const d = Render.itemSize(it); if (d.w > 368) it.s = Math.max(12, it.s * 368 / d.w); }
+function addText(text) {
+  pushUndo();
+  const n = ed.items.filter(i => i.kind === 'text').length, H = logicalH();
+  const y = Math.min(H - 30, Math.max(30, H / 2 + ((n % 3) - (n % 3 === 2 ? 3 : 0)) * txt.s * 1.3));
+  const it = { kind: 'text', text, font: txt.font, fx: txt.fx, x: 192, y, s: txt.s, r: 0 };
+  fitText(it); ed.items.push(it);
+  ed.sel = ed.items.length - 1;
+  $('edit-hint').hidden = false;
+  document.fonts?.load(`40px "${txt.font}"`).then(renderEdit).catch(() => {});
+  renderEdit();
+}
+let textBase = null;
+$('text-in').addEventListener('focus', () => { textBase = selText() ? snap() : null; });
+$('text-in').addEventListener('input', e => {
+  const v = e.target.value, t = selText();
+  if (t) {
+    if (!v.trim()) { ed.items.splice(ed.sel, 1); ed.sel = -1; } else { t.text = v; fitText(t); }
+    renderEdit();
+  } else if (v.trim()) { addText(v); textBase = null; }
+});
+$('text-in').addEventListener('change', () => {
+  if (textBase && JSON.stringify(textBase.items) !== JSON.stringify(ed.items)) { undoStack.push(textBase); $('undo').disabled = false; }
+  textBase = selText() ? snap() : null;
+});
+$('text-in').addEventListener('keydown', e => { if (e.key === 'Enter') e.target.blur(); });
+$('text-new').addEventListener('click', () => { ed.sel = -1; placeSel(); $('text-in').value = ''; $('text-in').focus(); });
+$$('#effects button').forEach(b => b.addEventListener('click', () => setTextStyle({ fx: b.dataset.fx })));
+let sizeBase = null;
+$('text-size').addEventListener('pointerdown', () => sizeBase = snap());
+$('text-size').addEventListener('input', e => { const t = selText(), v = +e.target.value; txt.s = v; if (t) { t.s = v; renderEdit(); } });
+$('text-size').addEventListener('change', () => { if (sizeBase && selText()) { undoStack.push(sizeBase); $('undo').disabled = false; } sizeBase = null; });
 // Zeiger (Finger oder Maus) in logische Koordinaten umrechnen
 function toLogical(e) {
   const c = $('editPreview'), r = c.getBoundingClientRect();
@@ -230,8 +290,8 @@ function toLogical(e) {
 function hit(p) {
   for (let i = ed.items.length - 1; i >= 0; i--) {
     const it = ed.items[i], dx = p.x - it.x, dy = p.y - it.y, c = Math.cos(-it.r), s = Math.sin(-it.r);
-    const lx = dx * c - dy * s, ly = dx * s + dy * c, half = it.s / 2 + 12;
-    if (Math.abs(lx) <= half && Math.abs(ly) <= half) return i;
+    const lx = dx * c - dy * s, ly = dx * s + dy * c, d = Render.itemSize(it);
+    if (Math.abs(lx) <= d.w / 2 + 12 && Math.abs(ly) <= d.h / 2 + 12) return i;
   }
   return -1;
 }
@@ -251,10 +311,10 @@ pv.addEventListener('pointerdown', e => {
   const p = toLogical(e);
   if (!pointers.size) {
     const i = hit(p);
-    if (i < 0) { ed.sel = -1; placeSel(); return; }
+    if (i < 0) { ed.sel = -1; placeSel(); syncTextUI(); return; }
     // ausgewähltes Element nach vorne holen
     if (i !== ed.items.length - 1) { ed.items.push(ed.items.splice(i, 1)[0]); }
-    ed.sel = ed.items.length - 1; gesture = null;
+    ed.sel = ed.items.length - 1; gesture = null; syncTextUI();
   } else if (ed.sel < 0) return;
   pv.setPointerCapture(e.pointerId);
   pointers.set(e.pointerId, p);
@@ -268,7 +328,7 @@ pv.addEventListener('pointermove', e => {
   if (!g.moved) { undoStack.push({ ...snap(), items: snap().items.map((x, i) => i === ed.sel ? { ...x, ...g.start } : x) }); $('undo').disabled = false; g.moved = true; }
   if (g.two && pts.length >= 2) {
     const [a, b] = pts, d = Math.hypot(b.x - a.x, b.y - a.y), ang = Math.atan2(b.y - a.y, b.x - a.x), mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-    it.s = Math.max(30, Math.min(600, g.start.s * d / g.two.d));
+    it.s = Math.max(it.kind === 'text' ? 12 : 30, Math.min(600, g.start.s * d / g.two.d));
     it.r = g.start.r + ang - g.two.a;
     it.x = g.start.x + mid.x - g.two.mid.x; it.y = g.start.y + mid.y - g.two.mid.y;
   } else {
@@ -287,7 +347,7 @@ pv.addEventListener('wheel', e => {
   const it = ed.items[ed.sel]; if (!it) return;
   e.preventDefault();
   if (e.shiftKey) it.r += e.deltaY > 0 ? 0.08 : -0.08;
-  else it.s = Math.max(30, Math.min(600, it.s * (e.deltaY > 0 ? 0.92 : 1.08)));
+  else it.s = Math.max(it.kind === 'text' ? 12 : 30, Math.min(600, it.s * (e.deltaY > 0 ? 0.92 : 1.08)));
   renderEdit();
 }, { passive: false });
 window.addEventListener('resize', placeSel);
@@ -534,6 +594,9 @@ $('p-update').addEventListener('click', async () => {
 applyLook();
 buildFrames();
 buildStickers();
+buildText();
+// Text-Schriften einmal laden, damit sie (über den Service Worker) auch offline da sind
+if (document.fonts) for (const f of Render.FONTS) document.fonts.load(`40px "${f.id}"`, 'Abc ÄÖÜß!?').catch(() => {});
 renderRecent();
 if (document.fonts) document.fonts.load('800 30px Lexend').catch(() => {});
 if (Printer.supported()) Printer.autoConnect();

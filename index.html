@@ -9,6 +9,7 @@
 <link rel="icon" href="icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Lexend:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Bangers&family=Gochi+Hand&family=Pacifico&family=Permanent+Marker&family=Press+Start+2P&family=Rubik+Mono+One&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
@@ -87,7 +88,7 @@
     <div class="tabs" role="tablist">
       <button role="tab" type="button" data-tab="frame" aria-selected="true">Rahmen</button>
       <button role="tab" type="button" data-tab="stickers" aria-selected="false">Smileys</button>
-      <button role="tab" type="button" disabled>Text <small>bald</small></button>
+      <button role="tab" type="button" data-tab="text" aria-selected="false">Text</button>
       <button role="tab" type="button" data-tab="look" aria-selected="false">Look</button>
     </div>
     <div data-pane="frame">
@@ -97,6 +98,23 @@
     <div data-pane="stickers" hidden>
       <div class="cats" id="sticker-cats" role="group" aria-label="Kategorie"></div>
       <div class="sticker-grid" id="sticker-grid"></div>
+    </div>
+    <div data-pane="text" hidden>
+      <div class="text-row">
+        <label class="field grow">Dein Text<input id="text-in" maxlength="40" placeholder="z. B. Hallo Oma!" autocomplete="off" enterkeyhint="done"></label>
+        <button class="btn line-btn" id="text-new" type="button">+ Neuer Text</button>
+      </div>
+      <div class="fonts" id="fonts"></div>
+      <div class="effects" id="effects" role="group" aria-label="Effekt">
+        <button type="button" data-fx="normal"><span class="fx-normal">Aa</span>Normal</button>
+        <button type="button" data-fx="umriss"><span class="fx-umriss">Aa</span>Umriss</button>
+        <button type="button" data-fx="negativ"><span class="fx-negativ">Aa</span>Negativ</button>
+      </div>
+      <label class="slider">Größe
+        <span class="small-a" aria-hidden="true">A</span>
+        <input type="range" id="text-size" min="16" max="160" value="56" aria-label="Textgröße">
+        <span class="big-a" aria-hidden="true">A</span>
+      </label>
     </div>
     <div data-pane="look" hidden>
       <div class="looks" id="looks">

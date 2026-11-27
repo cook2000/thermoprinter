@@ -253,12 +253,44 @@ function photoContent(img, cw, ch, look, bright) {
   return ink;
 }
 
-/* ---------- Elemente auf dem Bild (Sticker, später Text) ----------
+/* ---------- Elemente auf dem Bild (Sticker und Text) ----------
    Koordinaten logisch (Breite 384): x, y = Mitte, s = Größe, r = Drehung (Bogenmaß).
-   Sticker: {kind:'sticker', img} – schwarz-weiße Zeichnung, wird immer voll schwarz/weiß gedruckt. */
+   Sticker: {kind:'sticker', img} – schwarz-weiße Zeichnung.
+   Text: {kind:'text', text, font, fx} – s = Schriftgröße; fx: 'normal' | 'umriss' | 'negativ'.
+   Alles wird immer voll schwarz/weiß gedruckt. */
+const FONTS = [
+  { id: 'Bangers', name: 'Comic' },
+  { id: 'Permanent Marker', name: 'Filzstift' },
+  { id: 'Press Start 2P', name: 'Pixel', k: 0.7 },
+  { id: 'Pacifico', name: 'Schwung' },
+  { id: 'Rubik Mono One', name: 'Block', k: 0.8 },
+  { id: 'Gochi Hand', name: 'Handschrift' },
+];
+const fontK = id => (FONTS.find(f => f.id === id) || {}).k || 1;
+const fontCss = it => `${Math.round(it.s * fontK(it.font))}px "${it.font}", system-ui, sans-serif`;
+let measureCtx = null;
+// Größe eines Elements (logisch) – für Auswahlrahmen und Antippen
+function itemSize(it) {
+  if (it.kind !== 'text') return { w: it.s, h: it.s };
+  measureCtx = measureCtx || document.createElement('canvas').getContext('2d');
+  measureCtx.font = fontCss(it);
+  const pad = it.fx === 'negativ' ? it.s * 0.35 : it.fx === 'umriss' ? it.s * 0.12 : 0;
+  return { w: Math.max(it.s * 0.6, measureCtx.measureText(it.text || ' ').width) + 2 * pad, h: it.s * 1.25 + pad };
+}
 function drawItem(c, it) {
   c.save(); c.translate(it.x, it.y); c.rotate(it.r || 0);
   if (it.kind === 'sticker' && it.img && it.img.complete && it.img.naturalWidth) c.drawImage(it.img, -it.s / 2, -it.s / 2, it.s, it.s);
+  if (it.kind === 'text' && it.text) {
+    c.font = fontCss(it); c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineJoin = 'round';
+    if (it.fx === 'negativ') {
+      const { w, h } = itemSize(it);
+      c.fillStyle = '#000'; c.beginPath(); c.roundRect(-w / 2, -h / 2, w, h, it.s * 0.2); c.fill();
+      c.fillStyle = '#fff'; c.fillText(it.text, 0, 0);
+    } else if (it.fx === 'umriss') {
+      c.strokeStyle = '#000'; c.lineWidth = Math.max(3, it.s * 0.16); c.strokeText(it.text, 0, 0);
+      c.fillStyle = '#fff'; c.fillText(it.text, 0, 0);
+    } else { c.fillStyle = '#000'; c.fillText(it.text, 0, 0); }
+  }
   c.restore();
 }
 function overlayItems(ink, width, H, s, items) {
@@ -374,5 +406,5 @@ function testPattern(W, dpi, title) {
   return fromCanvas(c);
 }
 
-return { FRAMES, compose, scale, layout, forPrint, toCanvas, fromCanvas, frameThumb, testPattern };
+return { FRAMES, FONTS, compose, scale, layout, forPrint, toCanvas, fromCanvas, frameThumb, testPattern, itemSize };
 })();

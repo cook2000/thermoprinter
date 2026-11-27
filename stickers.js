@@ -21,6 +21,7 @@ const Stickers = (() => {
       ['staunt', B(face + dot(36, 42, 6) + dot(64, 42, 6) + '<path d="M27 28q9-7 18 0M55 28q9-7 18 0" fill="none"/><ellipse cx="50" cy="69" rx="8" ry="11" fill="#000"/>')],
       ['frech', B(face + dot(36, 40) + dot(64, 40) + '<path d="M44 64v9q6 11 12 0v-9" /><path d="M30 60q20 14 40 0" fill="none"/>')],
       ['kuss', B(face + '<path d="M28 40q7 6 14 0M58 40q7 6 14 0" fill="none"/><path d="M47 57q9 4 0 8q9 4 0 8" fill="none"/>' + heartPath(72, 60, 0.9))],
+      ['kackhaufen', B('<path d="M12 86q-6-15 11-19h54q17 4 11 19z"/><path d="M22 67q-5-15 12-18h32q17 3 12 18z"/><path d="M33 49q-3-15 15-27q3 9 11 11q13 4 8 16z"/><circle cx="40" cy="58" r="6"/><circle cx="60" cy="58" r="6"/>' + dot(41, 59, 3) + dot(61, 59, 3) + '<path d="M38 75q12 9 24 0" fill="none"/>')],
     ] },
     { id: 'bubbles', name: 'Sprechblasen', items: [
       ['blase', B(bubble)],
@@ -50,6 +51,8 @@ const Stickers = (() => {
       ['glitzer', B('<path d="M46 8q4 38 40 42q-36 4-40 42q-4-38-40-42q36-4 40-42z"/><path d="M84 8q2 11 11 13q-9 2-11 12q-2-10-11-12q9-2 11-13z" fill="#000" stroke-width="2"/>')],
       ['regenbogen', B('<path d="M6 76a44 44 0 0 1 88 0M19 76a31 31 0 0 1 62 0M32 76a18 18 0 0 1 36 0" fill="none"/><path d="M4 86a8 8 0 0 1 6-12 9 9 0 0 1 16 2 7 7 0 0 1 2 10zM96 86a8 8 0 0 0-6-12 9 9 0 0 0-16 2 7 7 0 0 0-2 10z"/>')],
       ['kuchen', B('<path d="M10 88h80"/><path d="M18 52h64v34H18z"/><path d="M18 62q8 8 16 0q8 8 16 0q8 8 16 0q8 8 16 0" fill="none"/><path d="M34 52V34M50 52V30M66 52V34" fill="none"/><path d="M34 26q-5-6 0-12q5 6 0 12zM50 22q-5-6 0-12q5 6 0 12zM66 26q-5-6 0-12q5 6 0 12z" fill="#000" stroke-width="2"/>')],
+      ['sonnenbrille', B('<path d="M4 38h92" fill="none"/><path d="M10 38h34v8q0 17-17 17t-17-17zM56 38h34v8q0 17-17 17t-17-17z" fill="#000"/><path d="M44 42q6-5 12 0" fill="none"/><path d="M17 45l7-5M63 45l7-5" stroke="#fff" stroke-width="3" fill="none"/>')],
+      ['daumen', B('<path d="M12 46h18v42H12z"/><path d="M30 48l15-28q4-10 12-7 7 4 3 16l-4 12h24q11 0 10 10l-5 28q-2 9-11 9H30z"/><path d="M58 53h22M57 65h23M56 77h21" fill="none" stroke-width="4"/>')],
       ['ballon', B('<path d="M50 6c19 0 31 15 31 33 0 22-18 38-31 40-13-2-31-18-31-40 0-18 12-33 31-33z"/><path d="M46 80l4 6 4-6z" stroke-width="3"/><path d="M50 86q-9 6 0 13" fill="none" stroke-width="3"/><path d="M36 24q-6 8-4 18" fill="none" stroke-width="4"/>')],
     ] },
   ];
