@@ -102,6 +102,7 @@ progress{width:100%;height:10px}
       <label>Hitze <input type="number" id="heat" min="0" max="100" value="93"></label>
       <label>HD-Zeilen pro Zoll <input type="number" id="lpi" min="150" max="400" value="203"></label>
       <label><input type="checkbox" id="swapNib"> HD: Halbbytes tauschen</label>
+      <label>HD: A9-Zeilenbyte <select id="hdBpl"><option value="48">0x30 (Standard)</option><option value="192">0xC0</option></select></label>
       <label><input type="checkbox" id="flipBits"> 1 Bit: Bitreihenfolge umkehren</label>
     </div>
     <div class="row">
@@ -132,7 +133,7 @@ function log(m) { const l = $('log'); l.textContent += new Date().toLocaleTimeSt
 if (!navigator.bluetooth) $('noBt').hidden = false;
 
 /* ---------- Einstellungen merken ---------- */
-const KEYS = ['heat', 'lpi', 'chunk', 'delay', 'heatList', 'bright', 'gamma', 'dith'], CHECKS = ['swapNib', 'flipBits', 'allDev'];
+const KEYS = ['heat', 'lpi', 'chunk', 'delay', 'heatList', 'bright', 'gamma', 'dith', 'hdBpl'], CHECKS = ['swapNib', 'flipBits', 'allDev'];
 try { const s = JSON.parse(localStorage.getItem('df_labor') || '{}'); KEYS.forEach(k => s[k] != null && ($(k).value = s[k])); CHECKS.forEach(k => s[k] != null && ($(k).checked = s[k])); } catch {}
 const persist = () => { const s = {}; KEYS.forEach(k => s[k] = $(k).value); CHECKS.forEach(k => s[k] = $(k).checked); try { localStorage.setItem('df_labor', JSON.stringify(s)); } catch {} };
 [...KEYS, ...CHECKS].forEach(k => $(k).addEventListener('change', persist));
@@ -285,9 +286,11 @@ async function printJob(job, heat) {
   await send(0xa2, [Math.max(0, Math.min(100, heat))]);
   await sleep(50);
   await status();
+  const a9Byte = job.hd ? (+$('hdBpl').value || 48) : 48;
   const ack = waitFor(0xa9, 3000);
-  await send(0xa9, [lines & 0xff, lines >> 8, bpl, job.hd ? 0x02 : 0x00]);
-  try { const d = await ack; if (d[0] !== 0) throw new Error('Drucker lehnt ab (Code ' + d[0] + ')'); } catch (e) { if (/lehnt/.test(e.message)) throw e; log(e.message + ' – sende trotzdem'); }
+  await send(0xa9, [lines & 0xff, lines >> 8, a9Byte, job.hd ? 0x02 : 0x00]);
+  log(`   A9: ${lines} Zeilen, Zeilenbyte 0x${a9Byte.toString(16)}, Modus ${job.hd ? 'HD (0x02)' : 'Schnell (0x00)'}`);
+  try { const d = await ack; if (d[0] !== 0) throw new Error('A9 abgelehnt (Code 0x' + d[0].toString(16) + ')'); log('   A9 angenommen'); } catch (e) { if (/abgelehnt/.test(e.message)) throw e; log(e.message + ' – sende trotzdem'); }
   const chunk = +$('chunk').value || bpl, gap = +$('delay').value, prog = $('prog');
   prog.hidden = false; prog.max = data.length;
   const t0 = performance.now();
@@ -297,9 +300,14 @@ async function printJob(job, heat) {
     prog.value = o;
   }
   log(`${lines} Zeilen à ${bpl} Byte gesendet in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
-  const done = waitFor(0xaa, 20000 + lines * 60);
+  const done = waitFor(0xaa, Math.max(90000, 20000 + lines * 60));
+  const t1 = performance.now();
   await send(0xad, [0x00]);
-  try { await done; log('Druck fertig'); } catch (e) { log(e.message); }
+  try {
+    const d = await done, s = ((performance.now() - t1) / 1000).toFixed(1);
+    if (d[0] === 0) log(`Druck fertig nach ${s} s, OK`);
+    else log(`Druck abgebrochen nach ${s} s, Code 0x${d[0].toString(16)}`);
+  } catch (e) { log(e.message); }
   prog.hidden = true;
 }
 async function run(fn) {
