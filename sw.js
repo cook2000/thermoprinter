@@ -1,5 +1,5 @@
 // Druckfrisch – Offline-Speicher. VERSION wird bei jeder neuen Version hochgezählt (gleich wie APP_VERSION in app.js).
-const VERSION = 'df-1.1.2';
+const VERSION = 'df-1.2.0';
 const FILES = ['./', './index.html', './app.css', './app.js', './stickers.js', './render.js', './printer.js', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {

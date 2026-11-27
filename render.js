@@ -392,6 +392,25 @@ function frameThumb(F, size = 120) {
   return c;
 }
 
+// Banner: Text quer über einen langen Streifen. Die Buchstaben sind fast so hoch wie das Papier breit,
+// der Streifen so lang wie der Text. Gelesen wird mit dem Streifen quer vor sich (Anfang = was zuerst herauskommt).
+function banner({ text, font, fx, width }) {
+  const W = width, t = (text || '').trim() || ' ', F = W * 0.72 * fontK(font);
+  const m = document.createElement('canvas').getContext('2d');
+  m.font = `${Math.round(F)}px "${font}", system-ui, sans-serif`;
+  const pad = Math.round(W * 0.12), L = Math.max(Math.round(W * 0.5), Math.ceil(m.measureText(t).width) + 2 * pad);
+  const c = document.createElement('canvas'); c.width = W; c.height = L;
+  const x = c.getContext('2d', { willReadFrequently: true });
+  x.fillStyle = fx === 'negativ' ? '#000' : '#fff'; x.fillRect(0, 0, W, L);
+  x.translate(W / 2, pad); x.rotate(Math.PI / 2);
+  x.font = m.font; x.textAlign = 'left'; x.textBaseline = 'middle'; x.lineJoin = 'round';
+  if (fx === 'umriss') { x.strokeStyle = '#000'; x.lineWidth = Math.max(4, F * 0.09); x.strokeText(t, 0, 0); x.fillStyle = '#fff'; x.fillText(t, 0, 0); }
+  else { x.fillStyle = fx === 'negativ' ? '#fff' : '#000'; x.fillText(t, 0, 0); }
+  const img = fromCanvas(c);
+  for (let i = 0; i < img.ink.length; i++) img.ink[i] = img.ink[i] >= 128 ? 255 : 0; // gestochen scharf
+  return img;
+}
+
 // Testdruck: Überschrift, Lineal, 16 Graustufen – zum Prüfen von Breite und Hitze
 function testPattern(W, dpi, title) {
   const H = Math.round(dpi * 0.8), c = document.createElement('canvas'); c.width = W; c.height = H;
@@ -406,5 +425,5 @@ function testPattern(W, dpi, title) {
   return fromCanvas(c);
 }
 
-return { FRAMES, FONTS, compose, scale, layout, forPrint, toCanvas, fromCanvas, frameThumb, testPattern, itemSize };
+return { FRAMES, FONTS, compose, banner, scale, layout, forPrint, toCanvas, fromCanvas, frameThumb, testPattern, itemSize };
 })();

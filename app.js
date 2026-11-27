@@ -1,5 +1,5 @@
 /* Druckfrisch – App-Logik */
-const APP_VERSION = '1.1.2';
+const APP_VERSION = '1.2.0';
 {
 const $ = id => document.getElementById(id);
 const $$ = s => document.querySelectorAll(s);
@@ -136,7 +136,8 @@ function camLoop() {
   if (stream && camView === 'print' && v.videoWidth) {
     const w = 240, h = Math.round(v.videoHeight * w / v.videoWidth), c = document.createElement('canvas');
     c.width = w; c.height = h; c.getContext('2d').drawImage(v, 0, 0, w, h);
-    view(Render.compose({ img: c, width: w, frameId: 'none', look: 'foto', bright: 0 }), pc);
+    // Kamera-Vorschau immer in „Schön“ (weiche Grautöne), unabhängig von der Druckwahl
+    Render.toCanvas(Render.forPrint(Render.compose({ img: c, width: w, frameId: 'none', look: 'foto', bright: 0 }), true, hdFloor(), hdGamma()), pc);
   }
   if (stream) camTimer = setTimeout(camLoop, 120);
 }
@@ -155,25 +156,39 @@ $('shutter').addEventListener('click', () => {
 
 /* ---------- Gestalten ---------- */
 // items: Sticker (später auch Text) auf dem Bild, logische Koordinaten (Breite 384): {kind, id, x, y, s, r}
-const ed = { img: null, frameId: 'none', caption: '', look: 'foto', bright: 0, items: [], sel: -1 };
+// textMode: über die Start-Kachel „Text“ geöffnet (leeres Blatt); banner: Text quer über einen langen Streifen
+const ed = { img: null, frameId: 'none', caption: '', look: 'foto', bright: 0, items: [], sel: -1, textMode: false, banner: false };
 const undoStack = [];
-const snap = () => ({ frameId: ed.frameId, caption: ed.caption, look: ed.look, bright: ed.bright, items: ed.items.map(it => ({ ...it })) });
+const snap = () => ({ frameId: ed.frameId, caption: ed.caption, look: ed.look, bright: ed.bright, banner: ed.banner, items: ed.items.map(it => ({ ...it })) });
 function pushUndo() { undoStack.push(snap()); if (undoStack.length > 40) undoStack.shift(); $('undo').disabled = false; }
 $('undo').addEventListener('click', () => {
   const s = undoStack.pop(); if (!s) return;
   Object.assign(ed, s); ed.sel = -1; $('undo').disabled = !undoStack.length; syncEditorUI(); syncTextUI(); renderEdit();
 });
 
-function openEditor(img) {
-  Object.assign(ed, { img, frameId: 'none', caption: '', look: 'foto', bright: 0, items: [], sel: -1 });
+function openEditor(img, opts = {}) {
+  Object.assign(ed, { img, frameId: 'none', caption: '', look: 'foto', bright: 0, items: [], sel: -1, textMode: !!opts.text, banner: false });
   undoStack.length = 0; $('undo').disabled = true;
-  syncEditorUI(); syncTextUI(); selectTab('frame'); renderLookThumbs();
+  $('text-format').hidden = !ed.textMode;
+  syncEditorUI(); syncTextUI(); selectTab(ed.textMode ? 'text' : 'frame'); renderLookThumbs();
   show('s-editor', stack[stack.length - 1] === 's-camera');
   renderEdit();
+  if (ed.textMode) setTimeout(() => $('text-in').focus(), 300);
 }
+// Start-Kachel „Text“: leeres weißes Blatt
+$('t-text').addEventListener('click', () => {
+  const c = document.createElement('canvas'); c.width = 800; c.height = 500;
+  const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height);
+  openEditor(c, { text: true });
+});
 // Elemente für Render.compose: Sticker-Bild dazuholen (lädt es bei Bedarf und zeichnet dann neu)
 const itemsFor = list => list.map(it => it.kind === 'sticker' ? { ...it, img: Stickers.image(it.id, renderEdit) } : it);
-const comp = w => Render.compose({ img: ed.img, width: w, frameId: ed.frameId, caption: ed.caption, look: ed.look, bright: ed.bright, items: itemsFor(ed.items) });
+const comp = w => ed.banner ? bannerComp(w) : Render.compose({ img: ed.img, width: w, frameId: ed.frameId, caption: ed.caption, look: ed.look, bright: ed.bright, items: itemsFor(ed.items) });
+// Banner aus allen Texten (Schrift und Effekt vom ersten Text)
+function bannerComp(w) {
+  const texts = ed.items.filter(i => i.kind === 'text'), f = texts[0] || txt;
+  return Render.banner({ text: texts.map(t => t.text).join('   ') || 'Dein Text', font: f.font, fx: f.fx, width: w });
+}
 // Neu zeichnen höchstens einmal pro Bildschirmbild – beim Ziehen bleibt es flüssig
 let renderQueued = false;
 function renderEdit() {
@@ -211,7 +226,7 @@ function addSticker(id) {
 // Auswahlrahmen über der Vorschau (gehört nicht zum Druck)
 function placeSel() {
   const box = $('sel'), it = ed.items[ed.sel], c = $('editPreview');
-  if (!it || !c.width) { box.hidden = true; return; }
+  if (!it || !c.width || ed.banner) { box.hidden = true; return; }
   const k = c.clientWidth / 384, d = Render.itemSize(it), w = d.w * k + 12, h = d.h * k + 12;
   box.hidden = false;
   box.style.width = w + 'px'; box.style.height = h + 'px';
@@ -226,7 +241,8 @@ $('sel-del').addEventListener('click', e => {
 /* ---------- Text ---------- */
 // Vorgaben für den nächsten Text; ein ausgewählter Text übernimmt Änderungen sofort
 const txt = { font: 'Bangers', fx: 'normal', s: 56 };
-const selText = () => { const it = ed.items[ed.sel]; return it && it.kind === 'text' ? it : null; };
+// Im Banner gilt immer der erste Text
+const selText = () => { if (ed.banner) return ed.items.find(i => i.kind === 'text') || null; const it = ed.items[ed.sel]; return it && it.kind === 'text' ? it : null; };
 function buildText() {
   const box = $('fonts'); box.innerHTML = '';
   for (const f of Render.FONTS) {
@@ -243,7 +259,14 @@ function syncTextUI() {
   $$('#fonts button').forEach(b => b.setAttribute('aria-pressed', b.dataset.font === txt.font));
   $$('#effects button').forEach(b => b.setAttribute('aria-pressed', b.dataset.fx === txt.fx));
   $('text-size').value = Math.max(16, Math.min(160, Math.round(txt.s)));
+  $$('[data-format]').forEach(b => b.setAttribute('aria-pressed', (b.dataset.format === 'banner') === ed.banner));
+  $('banner-hint').hidden = !ed.banner; $('text-size-row').hidden = ed.banner; $('text-new').hidden = ed.banner;
+  $('edit-hint').hidden = ed.banner || !ed.items.length;
 }
+$$('[data-format]').forEach(b => b.addEventListener('click', () => {
+  const on = b.dataset.format === 'banner'; if (on === ed.banner) return;
+  pushUndo(); ed.banner = on; ed.sel = -1; syncTextUI(); renderEdit();
+}));
 function setTextStyle(patch) {
   const t = selText();
   if (t) { pushUndo(); Object.assign(t, patch); fitText(t); renderEdit(); }
@@ -267,7 +290,7 @@ $('text-in').addEventListener('focus', () => { textBase = selText() ? snap() : n
 $('text-in').addEventListener('input', e => {
   const v = e.target.value, t = selText();
   if (t) {
-    if (!v.trim()) { ed.items.splice(ed.sel, 1); ed.sel = -1; } else { t.text = v; fitText(t); }
+    if (!v.trim()) { ed.items.splice(ed.items.indexOf(t), 1); ed.sel = -1; } else { t.text = v; if (!ed.banner) fitText(t); }
     renderEdit();
   } else if (v.trim()) { addText(v); textBase = null; }
 });
@@ -308,6 +331,7 @@ function startGesture() {
 }
 const pv = $('editPreview');
 pv.addEventListener('pointerdown', e => {
+  if (ed.banner) return; // im Banner gibt es nichts zu verschieben
   const p = toLogical(e);
   if (!pointers.size) {
     const i = hit(p);
@@ -388,13 +412,14 @@ $('bright').addEventListener('pointerdown', () => brightBase = snap());
 $('bright').addEventListener('input', e => { ed.bright = +e.target.value; renderEdit(); });
 $('bright').addEventListener('change', () => { if (brightBase && brightBase.bright !== ed.bright) { undoStack.push(brightBase); $('undo').disabled = false; } brightBase = null; });
 $('reset-look').addEventListener('click', () => { pushUndo(); ed.look = 'foto'; ed.bright = 0; syncEditorUI(); renderEdit(); });
-$('to-print').addEventListener('click', () => { ed.sel = -1; placeSel(); openPrint(comp); });
+$('to-print').addEventListener('click', () => { ed.sel = -1; placeSel(); openPrint(comp, { banner: ed.banner }); });
 
 /* ---------- Drucken ---------- */
 const pr = { comp: null, mode: S.lastMode, size: 1, count: 1 };
-function openPrint(compFn) { pr.comp = compFn; pr.count = 1; renderPrintUI(); show('s-print'); }
+// Banner geht nur auf der Rolle (als Sticker würde er winzig)
+function openPrint(compFn, opts = {}) { pr.comp = compFn; pr.count = 1; pr.banner = !!opts.banner; if (pr.banner) pr.mode = 'roll'; renderPrintUI(); show('s-print'); }
 function renderPrintUI() {
-  $$('.choice').forEach(b => b.setAttribute('aria-pressed', b.dataset.mode === pr.mode));
+  $$('.choice').forEach(b => { b.setAttribute('aria-pressed', b.dataset.mode === pr.mode); b.disabled = pr.banner && b.dataset.mode === 'sticker'; });
   $('quality-group').hidden = !canHD();
   $$('[data-quality]').forEach(b => b.setAttribute('aria-pressed', b.dataset.quality === S.quality));
   const sizes = $('sizes'); sizes.innerHTML = '';
