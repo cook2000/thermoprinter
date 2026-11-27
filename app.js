@@ -1,5 +1,5 @@
 /* Druckfrisch – App-Logik */
-const APP_VERSION = '1.0.4';
+const APP_VERSION = '1.1.1';
 {
 const $ = id => document.getElementById(id);
 const $$ = s => document.querySelectorAll(s);
@@ -154,28 +154,143 @@ $('shutter').addEventListener('click', () => {
 });
 
 /* ---------- Gestalten ---------- */
-const ed = { img: null, frameId: 'none', caption: '', look: 'foto', bright: 0 };
+// items: Sticker (später auch Text) auf dem Bild, logische Koordinaten (Breite 384): {kind, id, x, y, s, r}
+const ed = { img: null, frameId: 'none', caption: '', look: 'foto', bright: 0, items: [], sel: -1 };
 const undoStack = [];
-const snap = () => ({ frameId: ed.frameId, caption: ed.caption, look: ed.look, bright: ed.bright });
+const snap = () => ({ frameId: ed.frameId, caption: ed.caption, look: ed.look, bright: ed.bright, items: ed.items.map(it => ({ ...it })) });
 function pushUndo() { undoStack.push(snap()); if (undoStack.length > 40) undoStack.shift(); $('undo').disabled = false; }
 $('undo').addEventListener('click', () => {
   const s = undoStack.pop(); if (!s) return;
-  Object.assign(ed, s); $('undo').disabled = !undoStack.length; syncEditorUI(); renderEdit();
+  Object.assign(ed, s); ed.sel = -1; $('undo').disabled = !undoStack.length; syncEditorUI(); renderEdit();
 });
 
 function openEditor(img) {
-  Object.assign(ed, { img, frameId: 'none', caption: '', look: 'foto', bright: 0 });
+  Object.assign(ed, { img, frameId: 'none', caption: '', look: 'foto', bright: 0, items: [], sel: -1 });
   undoStack.length = 0; $('undo').disabled = true;
   syncEditorUI(); selectTab('frame'); renderLookThumbs();
   show('s-editor', stack[stack.length - 1] === 's-camera');
   renderEdit();
 }
-const comp = w => Render.compose({ img: ed.img, width: w, frameId: ed.frameId, caption: ed.caption, look: ed.look, bright: ed.bright });
-let renderT;
+// Elemente für Render.compose: Sticker-Bild dazuholen (lädt es bei Bedarf und zeichnet dann neu)
+const itemsFor = list => list.map(it => it.kind === 'sticker' ? { ...it, img: Stickers.image(it.id, renderEdit) } : it);
+const comp = w => Render.compose({ img: ed.img, width: w, frameId: ed.frameId, caption: ed.caption, look: ed.look, bright: ed.bright, items: itemsFor(ed.items) });
+// Neu zeichnen höchstens einmal pro Bildschirmbild – beim Ziehen bleibt es flüssig
+let renderQueued = false;
 function renderEdit() {
-  clearTimeout(renderT);
-  renderT = setTimeout(() => { if (ed.img) view(comp(printW()), $('editPreview')); }, 40);
+  if (renderQueued) return;
+  renderQueued = true;
+  requestAnimationFrame(() => { renderQueued = false; if (ed.img) { view(comp(printW()), $('editPreview')); placeSel(); } });
 }
+
+/* ---------- Sticker setzen, auswählen, ziehen, drehen ---------- */
+let stickerCat = Stickers.CATS[0].id;
+function buildStickers() {
+  const cats = $('sticker-cats'); cats.innerHTML = '';
+  for (const c of Stickers.CATS) {
+    const b = document.createElement('button'); b.type = 'button'; b.textContent = c.name; b.setAttribute('aria-pressed', c.id === stickerCat);
+    b.addEventListener('click', () => { stickerCat = c.id; buildStickers(); });
+    cats.append(b);
+  }
+  const grid = $('sticker-grid'); grid.innerHTML = '';
+  for (const [id] of Stickers.CATS.find(c => c.id === stickerCat).items) {
+    const b = document.createElement('button'); b.type = 'button'; b.setAttribute('aria-label', 'Sticker ' + id);
+    const im = document.createElement('img'); im.src = Stickers.url(id); im.alt = ''; b.append(im);
+    b.addEventListener('click', () => addSticker(id));
+    grid.append(b);
+  }
+}
+const logicalH = () => { const c = $('editPreview'); return c.width ? c.height * 384 / c.width : 384; };
+function addSticker(id) {
+  pushUndo();
+  const n = ed.items.length, off = (n % 4) * 14; // nicht genau übereinander
+  ed.items.push({ kind: 'sticker', id, x: 192 + off, y: logicalH() / 2 + off, s: 120, r: 0 });
+  ed.sel = ed.items.length - 1;
+  $('edit-hint').hidden = false;
+  renderEdit();
+}
+// Auswahlrahmen über der Vorschau (gehört nicht zum Druck)
+function placeSel() {
+  const box = $('sel'), it = ed.items[ed.sel], c = $('editPreview');
+  if (!it || !c.width) { box.hidden = true; return; }
+  const k = c.clientWidth / 384, size = it.s * k + 12;
+  box.hidden = false;
+  box.style.width = box.style.height = size + 'px';
+  box.style.transform = `translate(${c.offsetLeft + it.x * k - size / 2}px, ${c.offsetTop + it.y * k - size / 2}px) rotate(${it.r}rad)`;
+}
+$('sel-del').addEventListener('click', e => {
+  e.stopPropagation();
+  if (ed.sel < 0) return;
+  pushUndo(); ed.items.splice(ed.sel, 1); ed.sel = -1; renderEdit();
+});
+// Zeiger (Finger oder Maus) in logische Koordinaten umrechnen
+function toLogical(e) {
+  const c = $('editPreview'), r = c.getBoundingClientRect();
+  return { x: (e.clientX - r.left) / r.width * 384, y: (e.clientY - r.top) / r.height * logicalH() };
+}
+function hit(p) {
+  for (let i = ed.items.length - 1; i >= 0; i--) {
+    const it = ed.items[i], dx = p.x - it.x, dy = p.y - it.y, c = Math.cos(-it.r), s = Math.sin(-it.r);
+    const lx = dx * c - dy * s, ly = dx * s + dy * c, half = it.s / 2 + 12;
+    if (Math.abs(lx) <= half && Math.abs(ly) <= half) return i;
+  }
+  return -1;
+}
+const pointers = new Map();
+let gesture = null; // {start: {x,y,s,r}, p0, two: {d, a, mid}}, moved
+function startGesture() {
+  const it = ed.items[ed.sel]; if (!it) { gesture = null; return; }
+  const pts = [...pointers.values()];
+  gesture = { start: { x: it.x, y: it.y, s: it.s, r: it.r }, p0: pts[0], moved: gesture ? gesture.moved : false };
+  if (pts.length >= 2) {
+    const [a, b] = pts;
+    gesture.two = { d: Math.hypot(b.x - a.x, b.y - a.y) || 1, a: Math.atan2(b.y - a.y, b.x - a.x), mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } };
+  }
+}
+const pv = $('editPreview');
+pv.addEventListener('pointerdown', e => {
+  const p = toLogical(e);
+  if (!pointers.size) {
+    const i = hit(p);
+    if (i < 0) { ed.sel = -1; placeSel(); return; }
+    // ausgewähltes Element nach vorne holen
+    if (i !== ed.items.length - 1) { ed.items.push(ed.items.splice(i, 1)[0]); }
+    ed.sel = ed.items.length - 1; gesture = null;
+  } else if (ed.sel < 0) return;
+  pv.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, p);
+  startGesture(); renderEdit();
+});
+pv.addEventListener('pointermove', e => {
+  if (!pointers.has(e.pointerId) || !gesture) return;
+  pointers.set(e.pointerId, toLogical(e));
+  const it = ed.items[ed.sel]; if (!it) return;
+  const pts = [...pointers.values()], g = gesture;
+  if (!g.moved) { undoStack.push({ ...snap(), items: snap().items.map((x, i) => i === ed.sel ? { ...x, ...g.start } : x) }); $('undo').disabled = false; g.moved = true; }
+  if (g.two && pts.length >= 2) {
+    const [a, b] = pts, d = Math.hypot(b.x - a.x, b.y - a.y), ang = Math.atan2(b.y - a.y, b.x - a.x), mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    it.s = Math.max(30, Math.min(600, g.start.s * d / g.two.d));
+    it.r = g.start.r + ang - g.two.a;
+    it.x = g.start.x + mid.x - g.two.mid.x; it.y = g.start.y + mid.y - g.two.mid.y;
+  } else {
+    it.x = g.start.x + pts[0].x - g.p0.x; it.y = g.start.y + pts[0].y - g.p0.y;
+  }
+  renderEdit();
+});
+const endPointer = e => {
+  if (!pointers.delete(e.pointerId)) return;
+  if (pointers.size) startGesture(); else gesture = null;
+};
+pv.addEventListener('pointerup', endPointer);
+pv.addEventListener('pointercancel', endPointer);
+// Am Computer: Mausrad = Größe, mit Umschalttaste = Drehen
+pv.addEventListener('wheel', e => {
+  const it = ed.items[ed.sel]; if (!it) return;
+  e.preventDefault();
+  if (e.shiftKey) it.r += e.deltaY > 0 ? 0.08 : -0.08;
+  else it.s = Math.max(30, Math.min(600, it.s * (e.deltaY > 0 ? 0.92 : 1.08)));
+  renderEdit();
+}, { passive: false });
+window.addEventListener('resize', placeSel);
 function syncEditorUI() {
   $$('#frames button').forEach(b => b.setAttribute('aria-pressed', b.dataset.frame === ed.frameId));
   $$('#looks button').forEach(b => b.setAttribute('aria-pressed', b.dataset.look === ed.look));
@@ -213,7 +328,7 @@ $('bright').addEventListener('pointerdown', () => brightBase = snap());
 $('bright').addEventListener('input', e => { ed.bright = +e.target.value; renderEdit(); });
 $('bright').addEventListener('change', () => { if (brightBase && brightBase.bright !== ed.bright) { undoStack.push(brightBase); $('undo').disabled = false; } brightBase = null; });
 $('reset-look').addEventListener('click', () => { pushUndo(); ed.look = 'foto'; ed.bright = 0; syncEditorUI(); renderEdit(); });
-$('to-print').addEventListener('click', () => openPrint(comp));
+$('to-print').addEventListener('click', () => { ed.sel = -1; placeSel(); openPrint(comp); });
 
 /* ---------- Drucken ---------- */
 const pr = { comp: null, mode: S.lastMode, size: 1, count: 1 };
@@ -418,6 +533,7 @@ $('p-update').addEventListener('click', async () => {
 /* ---------- Start ---------- */
 applyLook();
 buildFrames();
+buildStickers();
 renderRecent();
 if (document.fonts) document.fonts.load('800 30px Lexend').catch(() => {});
 if (Printer.supported()) Printer.autoConnect();

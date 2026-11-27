@@ -86,6 +86,18 @@ small{display:block;font-size:15px;color:var(--mute);font-weight:400}
 .stage{flex:1;display:grid;place-items:center;padding:8px 0 16px;min-height:300px}
 .paper{background:#fff;box-shadow:0 18px 40px rgba(29,27,24,.12);padding:16px 0 22px;width:min(420px,80vw)}
 .paper canvas{display:block;width:100%;height:auto;image-rendering:pixelated}
+#editPaper{position:relative}
+#editPreview{touch-action:none;cursor:grab}
+.sel{position:absolute;left:0;top:0;border:3px dashed var(--blue);border-radius:10px;pointer-events:none;transform-origin:center}
+.sel-del{pointer-events:auto;position:absolute;top:-28px;right:-28px;width:56px;height:56px;border-radius:50%;border:3px solid #fff;background:var(--ink);color:#fff;display:grid;place-items:center;box-shadow:0 4px 12px rgba(0,0,0,.25)}
+.edit-hint{margin:-6px 0 8px;text-align:center;font-size:15px;color:var(--mute)}
+.cats{display:flex;gap:10px;overflow-x:auto;padding-bottom:2px}
+.cats button{flex:none;min-height:48px;padding:0 18px;border:3px solid var(--line);border-radius:999px;background:#fff;font-size:17px;font-weight:600}
+.cats button[aria-pressed=true]{border-color:var(--ink);background:var(--ink);color:#fff}
+.sticker-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:12px}
+.sticker-grid button{aspect-ratio:1;border:3px solid var(--line);border-radius:18px;background:#fff;padding:10px;display:grid;place-items:center}
+.sticker-grid button:active{border-color:var(--acc);background:var(--acc-tint)}
+.sticker-grid img{width:100%;height:100%;object-fit:contain}
 .paper.small{width:min(230px,40vw);padding:10px 0;max-height:420px;overflow:hidden}
 .panel{background:#fff;border-radius:36px 36px 0 0;padding:24px clamp(16px,4vw,36px) max(32px,env(safe-area-inset-bottom));margin:0 calc(-1*clamp(16px,5vw,44px));display:flex;flex-direction:column;gap:20px;box-shadow:0 -8px 30px rgba(29,27,24,.06)}
 .panel>[data-pane]{display:flex;flex-direction:column;gap:20px}

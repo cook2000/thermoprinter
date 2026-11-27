@@ -1,6 +1,6 @@
 // Druckfrisch – Offline-Speicher. VERSION wird bei jeder neuen Version hochgezählt (gleich wie APP_VERSION in app.js).
-const VERSION = 'df-1.0.4';
-const FILES = ['./', './index.html', './app.css', './app.js', './render.js', './printer.js', './manifest.json', './icon-192.png', './icon-512.png'];
+const VERSION = 'df-1.1.1';
+const FILES = ['./', './index.html', './app.css', './app.js', './stickers.js', './render.js', './printer.js', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(FILES.map(f => new Request(f, { cache: 'reload' })))).then(() => self.skipWaiting()));

@@ -240,18 +240,46 @@ function forPrint(img, hd, floor = 6, gamma = 0.6) {
   return { lv: quantizeHD(img.ink, img.w, img.h, floor, gamma), floor, gamma, w: img.w, h: img.h };
 }
 
-// Bild + Rahmen + Beschriftung in Druckbreite `width` (Pixel) zusammensetzen
-function compose({ img, width, frameId, caption, look, bright }) {
+// Aufbereitetes Foto merken: beim Ziehen von Stickern ändert sich nur die Ebene darüber
+let contentCache = null;
+function photoContent(img, cw, ch, look, bright) {
+  const c = contentCache;
+  if (c && c.img === img && c.cw === cw && c.ch === ch && c.look === look && c.bright === bright) return c.ink;
+  const cc = document.createElement('canvas'); cc.width = cw; cc.height = ch;
+  const cx = cc.getContext('2d', { willReadFrequently: true });
+  cx.fillStyle = '#fff'; cx.fillRect(0, 0, cw, ch); cx.drawImage(img, 0, 0, cw, ch);
+  const ink = process(cx.getImageData(0, 0, cw, ch).data, cw, ch, look, bright);
+  contentCache = { img, cw, ch, look, bright, ink };
+  return ink;
+}
+
+/* ---------- Elemente auf dem Bild (Sticker, später Text) ----------
+   Koordinaten logisch (Breite 384): x, y = Mitte, s = Größe, r = Drehung (Bogenmaß).
+   Sticker: {kind:'sticker', img} – schwarz-weiße Zeichnung, wird immer voll schwarz/weiß gedruckt. */
+function drawItem(c, it) {
+  c.save(); c.translate(it.x, it.y); c.rotate(it.r || 0);
+  if (it.kind === 'sticker' && it.img && it.img.complete && it.img.naturalWidth) c.drawImage(it.img, -it.s / 2, -it.s / 2, it.s, it.s);
+  c.restore();
+}
+function overlayItems(ink, width, H, s, items) {
+  if (!items || !items.length) return;
+  const oc = document.createElement('canvas'); oc.width = width; oc.height = H;
+  const ox = oc.getContext('2d', { willReadFrequently: true });
+  ox.scale(s, s);
+  for (const it of items) drawItem(ox, it);
+  const d = ox.getImageData(0, 0, width, H).data;
+  for (let i = 0; i < width * H; i++) if (d[i * 4 + 3] > 128) ink[i] = d[i * 4] < 128 ? 255 : 0;
+}
+
+// Bild + Rahmen + Beschriftung + Elemente in Druckbreite `width` (Pixel) zusammensetzen
+function compose({ img, width, frameId, caption, look, bright, items }) {
   const F = FRAMES.find(f => f.id === frameId) || FRAMES[0];
   const s = width / BASE;
   const cap = (caption || '').trim(), capH = cap ? 46 : 0;
   const g0 = geo(F, 0);
   const cw = Math.max(8, Math.round(width - (g0.l + g0.r) * s));
   const ch = Math.max(1, Math.round(img.height * cw / img.width));
-  const cc = document.createElement('canvas'); cc.width = cw; cc.height = ch;
-  const cx = cc.getContext('2d', { willReadFrequently: true });
-  cx.fillStyle = '#fff'; cx.fillRect(0, 0, cw, ch); cx.drawImage(img, 0, 0, cw, ch);
-  const content = process(cx.getImageData(0, 0, cw, ch).data, cw, ch, look, bright);
+  const content = photoContent(img, cw, ch, look, bright);
 
   const g = geo(F, ch / s + capH);
   const H = Math.round(g.H * s);
@@ -273,6 +301,7 @@ function compose({ img, width, frameId, caption, look, bright }) {
   for (let i = 0; i < width * H; i++) ink[i] = fd[i * 4] < 128 ? 255 : 0;
   const ox = Math.round(g.l * s), oy = Math.round(g.t * s), cwi = Math.min(cw, width - ox);
   for (let y = 0; y < ch && y + oy < H; y++) ink.set(content.subarray(y * cw, y * cw + cwi), (y + oy) * width + ox);
+  overlayItems(ink, width, H, s, items);
   return { ink, w: width, h: H };
 }
 

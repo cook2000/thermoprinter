@@ -75,7 +75,14 @@ Befunde aus Testdrucken am 27.11.2026:
 - Schön: `Render.forPrint(img, true, hdFloor)` rastert direkt auf die Druckerstufen 0 und `hdFloor`…15 (Floyd–Steinberg mit Palette). Tinte < 16 bleibt papierweiß, sehr helle Töne werden zwischen Weiß und `hdFloor` gerastert (kein grauer Hintergrund mehr). `printer.js` packt nur noch. Vorschau zeigt die Druckerstufen mit ihrer angenommenen Helligkeit.
 - Rückmeldung Holger nach 1.0.2-Druck: Schön wird in den Mitteltönen schnell dunkel (Augen besser bei Schnell).
 
-### Version 1.0.4 (27.11.2026) – gebaut, nicht am Gerät getestet
+### Etappe 2 – Plan freigegeben am 27.11.2026, Umsetzung in drei Schritten
+
+Druckteil gilt mit 1.0.4 als fertig („passt erstmal so“). Etappe 2 endet mit 1.2.0.
+1. **1.1.1 Sticker – gebaut, im Browser getestet, nicht am Tablet.** `stickers.js`: 32 eigene SVG-Strichzeichnungen (viewBox 100, weiße Füllung, schwarze Linien), Kategorien Gesichter, Sprechblasen, Tiere, Deko. Reiter „Smileys“ im Editor. `ed.items` = `{kind:'sticker', id, x, y, s, r}` in logischen Koordinaten (Breite 384, Mitte, Größe, Drehung). `Render.compose({…, items})` legt sie nach Foto und Rahmen als reines Schwarz/Weiß darüber (`overlayItems`); Foto-Aufbereitung wird gecacht (`photoContent`). Bedienung: antippen = auswählen (nach vorne), ziehen, zwei Finger = drehen/größer, Mausrad (+Umschalt) am Computer, Papierkorb am Auswahlrahmen (`#sel`, nur Anzeige), Rückgängig für alles. Zeichnen per `requestAnimationFrame`.
+2. 1.1.2 Text: Reiter „Text“, 6 Schriften, Effekte Normal/Umriss/Negativ, Größe; Text als weiteres `kind` in `ed.items`.
+3. 1.2.0 Start-Kachel „Text“ (leeres Blatt) und Effekt „Banner“ (quer über langen Streifen).
+
+### Version 1.0.4 (27.11.2026) – am Tablet getestet: Schön mit guten Mitteltönen, passt
 
 - Schön: Mitteltöne heller. Angenommene Dunkelheit einer Druckerstufe = t^`hdGamma` (Standard 0,6, unter „Erweitert“ „Schön: Mitteltöne“, 0,3–1,5). Wirkung bei hdFloor 6: Tinte 64 → Stufe 6 (vorher 8), 128 → 8 (vorher 10), 192 → 11 (vorher 13); Weiß und Schwarz unverändert.
 
