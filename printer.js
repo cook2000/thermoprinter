@@ -7,7 +7,7 @@ const Printer = (() => {
   const save = o => { try { localStorage.setItem(KEY, JSON.stringify({ ...load(), ...o })); } catch {} };
 
   let dev = null, chW = null, chN = null, chD = null, proto = 'gb';
-  let paused = false, waiters = [], wantConnected = false, retry = 0, retryTimer = null, connecting = null, printing = false;
+  let paused = false, pauses = 0, waiters = [], wantConnected = false, retry = 0, retryTimer = null, connecting = null, printing = false;
   const listeners = new Set();
   let state = 'off';
   // MXW01-Status: Akku in %, Kopf-Temperatur, Fehler ('paper' | 'hot' | 'battery' | 'other' | null)
@@ -31,7 +31,8 @@ const Printer = (() => {
   function onNotify(e) {
     const v = new Uint8Array(e.target.value.buffer);
     log('← ' + Array.from(v, b => b.toString(16).padStart(2, '0')).join(' '));
-    if (v[0] === 0x51 && v[1] === 0x78 && v[2] === 0xae) paused = v[6] === 0x10;
+    // Flusskontrolle: AE mit 0x10 = „Puffer voll, warten“, 0x00 = „weiter“ (klassisch und MXW01, Tablet-Log 27.11.)
+    if ((v[0] === 0x51 && v[1] === 0x78 || v[0] === 0x22 && v[1] === 0x21) && v[2] === 0xae) { paused = v[6] === 0x10; if (paused) pauses++; }
     if (v[0] === 0x22 && v[1] === 0x21) waiters = waiters.filter(w => (w.cmd === v[2] ? (w.res(v), false) : true));
   }
   function waitFor(cmd, ms = 8000) {
@@ -114,23 +115,27 @@ const Printer = (() => {
   }
 
   /* ---------- Drucken ---------- */
-  // Paketgröße und Pause. MXW01 laut Labor (27.11.2026): Schnell 48 Byte / 12 ms,
-  // Schön 96 Byte / 30 ms – 192-Byte-Pakete kommen nicht an, zu schnell gehen Pakete verloren.
+  // Paketgröße und Pause. MXW01 (Tests 27.11.2026): Schnell 48 Byte / 12 ms, Schön 96 Byte / 10 ms (Tablet).
+  // 192-Byte-Pakete kommen nicht vollständig an. Zu langsam (96/30 am Tablet) → Puffer läuft leer, Drucker bricht ab.
+  // Zu schnell → Drucker meldet AE 0x10, darauf wartet write().
   const model = () => { const c = load(); return c.proto && c.proto !== 'auto' ? c.proto : ((c.name || '').toUpperCase().startsWith('MXW') ? 'mxw' : 'gb'); };
   function transfer(hd) {
     const c = load(), m = chW ? proto : model();
-    if (hd) return { size: c.pkHd || 96, dly: c.dlHd ?? 30 };
+    if (hd) return { size: c.pkHd || 96, dly: c.dlHd ?? 10 };
     return { size: c.pkFast || (m === 'mxw' ? 48 : 128), dly: c.dlFast ?? 12 };
   }
-  async function write(ch, bytes, onProgress, { size, dly }) {
-    const arr = Uint8Array.from(bytes);
+  // progressEnd: bis zu diesem Byte läuft der Balken (Bildzeilen ohne Vorschub); stop(): true = abbrechen
+  async function write(ch, bytes, onProgress, { size, dly, progressEnd, maxPause = 10000, stop }) {
+    const arr = Uint8Array.from(bytes), end = progressEnd || arr.length;
     for (let o = 0; o < arr.length; o += size) {
-      let wait = 0; while (paused && wait++ < 500) await sleep(20);
+      if (stop && stop()) return false;
+      const t = performance.now(); while (paused && performance.now() - t < maxPause) await sleep(20);
       const part = arr.slice(o, o + size);
       if (ch.writeValueWithoutResponse) await ch.writeValueWithoutResponse(part); else await ch.writeValue(part);
       if (dly) await sleep(dly);
-      onProgress && onProgress(Math.min(1, (o + size) / arr.length));
+      onProgress && onProgress(Math.min(1, (o + size) / end));
     }
+    return true;
   }
   const rowBytes = (img, y, flip) => {
     const n = img.w >> 3, b = new Uint8Array(n);
@@ -169,12 +174,21 @@ const Printer = (() => {
         // Drittes Byte immer 0x30 (auch bei 4 Bit), Modus 0x00 = 1 Bit, 0x02 = 4 Bit
         await chW.writeValueWithoutResponse(Uint8Array.from(mx(0xa9, [total & 0xff, total >> 8, 0x30, hd ? 0x02 : 0x00])));
         const r = await ack; if (r[6] !== 0) throw problem('other');
-        log(`${total} Zeilen · ${hd ? 'Schön (4 Bit)' : 'Schnell (1 Bit)'} · Hitze ${Math.round(heat)}`);
-        await write(chD, data, onProgress, transfer(hd));
-        const done = waitFor(0xaa, Math.max(90000, 20000 + total * 80));
+        const tr = transfer(hd);
+        log(`${total} Zeilen · ${hd ? 'Schön (4 Bit)' : 'Schnell (1 Bit)'} · Hitze ${Math.round(heat)} · ${tr.size} Byte / ${tr.dly} ms`);
+        // AA („Druck fertig“) kann schon kommen, während noch gesendet wird – deshalb ab jetzt mithören.
+        // AA-Nutzdaten[0]: 0x00 = fertig, sonst (fc, fe …) = abgebrochen.
+        let aa = null; paused = false; pauses = 0;
+        const aaSeen = waitFor(0xaa, 600000).then(v => { aa = v; log(`Drucker meldet: ${v[6] === 0 ? 'fertig' : 'abgebrochen (0x' + v[6].toString(16) + ')'}`); }).catch(() => {});
+        const t0 = performance.now();
+        const complete = await write(chD, data, onProgress, { ...tr, progressEnd: img.h * bpl, maxPause: 3000, stop: () => aa && aa[6] !== 0 });
+        const s = (performance.now() - t0) / 1000;
+        log(complete ? `gesendet in ${s.toFixed(1)} s · ${(data.length / 1024 / s).toFixed(1)} KB/s · ${pauses}× gebremst` : `Senden gestoppt nach ${s.toFixed(1)} s · ${pauses}× gebremst`);
         await chW.writeValueWithoutResponse(Uint8Array.from(mx(0xad, [0x00])));
-        await done.catch(e => log(e.message));
-      } finally { printing = false; setTimeout(status, 1500); }
+        if (!aa) await Promise.race([aaSeen, sleep(10000)]);
+        if (!aa) log('keine Fertig-Meldung, nehme an: fertig');
+        else if (aa[6] !== 0) throw problem('abort');
+      } finally { printing = false; paused = false; waiters = waiters.filter(w => w.cmd !== 0xaa); setTimeout(status, 1500); }
       return;
     }
     const e = Math.round(0x1000 + heat / 100 * 0xb000), buf = [];
@@ -184,7 +198,7 @@ const Printer = (() => {
     const empty = new Uint8Array(n);
     for (let y = 0; y < feed; y++) buf.push(...gb(0xa2, empty));
     buf.push(...gb(0xa6, [0xaa, 0x55, 0x17, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x17]), ...gb(0xa3, [0x00]));
-    await write(chW, buf, onProgress, transfer(false));
+    await write(chW, buf, onProgress, { ...transfer(false), progressEnd: buf.length - (feed + 2) * (n + 8) });
   }
 
   return {

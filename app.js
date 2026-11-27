@@ -1,5 +1,5 @@
 /* Druckfrisch – App-Logik */
-const APP_VERSION = '1.0.1';
+const APP_VERSION = '1.0.2';
 {
 const $ = id => document.getElementById(id);
 const $$ = s => document.querySelectorAll(s);
@@ -75,6 +75,7 @@ const PROBLEM = {
   hot: 'Der Drucker ist zu warm. Kurz Pause machen, dann nochmal.',
   battery: 'Der Drucker braucht Strom. Bitte aufladen.',
   other: 'Der Drucker meldet ein Problem. Ist die Klappe zu?',
+  abort: 'Das hat nicht ganz geklappt. Bitte nochmal drucken.',
 };
 const PROBLEM_SHORT = { paper: 'Papier leer', hot: 'Drucker zu warm', battery: 'Akku leer', other: 'Drucker prüfen' };
 function paintStatus(st) {
@@ -250,7 +251,9 @@ async function runPrint(img, heat, label, done = true) {
   $('ov-text').textContent = label || 'Druckt …'; $('ov-done').hidden = true; prog.hidden = false; prog.value = 0; ov.hidden = false;
   await nextFrame();
   try {
-    await Printer.print(img, { heat, feed: Math.round(dpiOf(img.w) * 0.6), onProgress: p => prog.value = p });
+    // Vorschub zum Abreißen: Schön 1 cm (spart Zeit), Schnell 1,5 cm. Der Balken zählt nur die Bildzeilen.
+    const feed = Math.round(dpiOf(img.w) * (img.lv ? 0.4 : 0.6));
+    await Printer.print(img, { heat, feed, onProgress: p => { prog.value = p; if (p >= 1) $('ov-text').textContent = 'Gleich fertig …'; } });
     if (!done) { ov.hidden = true; return true; }
     $('ov-text').textContent = 'Fertig! Abreißen und los geht’s.';
     prog.hidden = true; $('ov-done').hidden = false; $('ov-home').focus();

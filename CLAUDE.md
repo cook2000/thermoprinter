@@ -30,7 +30,9 @@ Befunde aus Testdrucken am 27.11.2026:
 | HD-Modus | 4 Bit pro Punkt, 16 Graustufen, 192 Byte/Zeile. Funktioniert (Labor 27.11.), siehe Übertragung unten. Halbbytes nicht tauschen. |
 | Hitze (Labor 27.11.) | **Schnell 70** (60 = Stufen am besten, Schrift etwas braun; ab 85 laufen dunkle Stufen zu). **HD 100** (Maximum; sichtbar erst ab Stufe ~6, bei 85 erst ab ~9). |
 | HD-Graustufen | Der Drucker zeigt nur etwa Stufe 6–15. Die App legt deshalb 1…15 auf `hdFloor`…15 (Standard 6), 0 bleibt weiß. HD-Fotos wirken sonst flau und bräunlich. |
-| Übertragung (Labor 27.11.) | Auf dem Mac (Chrome) kommen 192-Byte-Pakete nicht an (MTU vermutlich ~185) → Drucker wartet 60 s, `AA` mit `fc`. Mit 96-Byte-Paketen und 12 ms gehen Pakete verloren (Bild ab Mitte um halbe Zeile versetzt, `AA` `fe`). **Stabil: 96 Byte / 30 ms** (~25 s für 400 Zeilen). Schnell: 48 Byte / 12 ms. Android noch nicht getestet. |
+| Übertragung Mac (Labor 27.11.) | 192-Byte-Pakete kommen nicht an → Drucker wartet 60 s, `AA` mit `fc`. 96 Byte / 12 ms: Pakete gehen verloren (Bild ab Mitte um halbe Zeile versetzt, `AA` `fe`). 96 Byte / 30 ms: sauber. |
+| Übertragung Tablet (27.11., **Zielgerät**) | Android sendet langsamer. 96/30: nur ~2 KB/s, Puffer läuft leer, Drucker bricht nach ~35 s ab (`AA fc`, Bild abgeschnitten). 192/10: abgeschnitten nach ~13 mm, dazu viele `AE 00`. **96 Byte / 10 ms: vollständig**, 634 Zeilen in 44 s, `AA 00 c8 c8`. Schnell: 48 Byte / 12 ms. |
+| Flusskontrolle | `AE` mit `10` = Puffer voll, warten; `AE` mit `00` = weiter (wie beim klassischen Protokoll). Seit 1.0.2 wartet die App darauf (max. 3 s). |
 | Fun-Print-Kamera | Verzerrt die Vorschau und schneidet auf 1:1 zu. Unsere App druckt das Originalformat. |
 
 ### MXW01-Protokoll (aus Community-Projekten, u. a. matheisenheim/agodeo-web-printer, ramos-adrian/catprinter, veli-ozturk/mxw01-sticker-printer)
@@ -39,8 +41,9 @@ Befunde aus Testdrucken am 27.11.2026:
 - **Ablauf:** `A2` Intensität → `A1` Status → `A9` Druckauftrag → Bilddaten auf `AE03` → `AD` Daten fertig → auf `AA` (Druck fertig) warten.
 - **A2 Intensität:** Wertebereich **0–100** (0x00–0x64), empfohlen **93** (0x5D).
 - **A9 Druckauftrag:** `[Zeilen lo, Zeilen hi, 0x30, Modus]`. Drittes Byte **immer `0x30`**, auch bei 4 Bit (wie catprinter und mxw01-sticker-printer; `0xC0` wird angenommen, druckt aber nicht). Modus: `0x00` = 1 Bit, `0x02` = 4 Bit. Die Antwort `A9` mit `data[0] == 0` heißt OK.
-- **AA Druck fertig:** Bedeutung der Bytes unklar. Erfolg Schnell: `00 6f 6f`; Abbruch nach 60 s: `fc 00 00`; HD mit verlorenen Paketen: `fe b6 b6`. Wird nur geloggt.
-- **AE:** kam einmal mit `10` während HD (evtl. Flusskontrolle „Puffer voll“, unbestätigt, wird nicht ausgewertet).
+- **AA Druck fertig:** Nutzdaten[0] `00` = fertig (z. B. `00 6f 6f`, `00 c8 c8`), sonst abgebrochen (`fc …` Puffer leer/Daten fehlen, `fe …` verlorene Pakete). **Kann schon während des Sendens kommen** – die App hört deshalb ab A9 mit, stoppt bei Abbruch und wartet nach `AD` höchstens 10 s.
+- **AE:** Flusskontrolle, siehe Tabelle oben.
+- Während des Drucks schickt der Drucker von sich aus `A1`-Status (Zustand 01, Temperatur steigt bis ~50 °C).
 - **1 Bit:** LSB zuerst, Bit 0 ist das linke Pixel, 1 = schwarz.
 - **4 Bit:** zwei Pixel pro Byte, **linkes Pixel im oberen Halbbyte**, 15 = schwarz, 0 = weiß.
 - **Minimum:** 90 Zeilen pro Auftrag, kürzere Aufträge mit weißen Zeilen auffüllen.
@@ -67,7 +70,15 @@ Befunde aus Testdrucken am 27.11.2026:
 
 **Arbeitsweise seit 27.11.:** Kein Git. Holger kopiert die Dateien manuell nach GitHub. Nach Änderungen sagen, welche Dateien hochzuladen sind. Version 1.1.0 erst, wenn am Tablet alles passt; Zwischenstände 1.0.x.
 
-### Version 1.0.1 (27.11.2026) – gebaut, nur mit simuliertem Drucker getestet
+### Version 1.0.2 (27.11.2026) – gebaut, mit simuliertem Drucker getestet
+
+Nach dem ersten Tablet-Test von 1.0.1 (beide Modi drucken; Schön war bei 96/30 abgeschnitten, Fenster blieb offen, Balken hinkte):
+- Standard Schön: 96 Byte / 10 ms. Flusskontrolle über `AE` (max. 3 s warten).
+- `AA` ab A9 mithören; `00` = fertig, sonst Meldung „Das hat nicht ganz geklappt. Bitte nochmal drucken.“; ohne `AA` nach 10 s „Fertig“.
+- Balken zählt nur Bildzeilen, danach „Gleich fertig …“. Vorschub Schön 1 cm (81 Zeilen), Schnell 1,5 cm.
+- Log: Paketgröße/Pause, Sendedauer, KB/s, Anzahl Bremsungen, Fertig/Abbruch.
+
+### Version 1.0.1 (27.11.2026) – am Tablet getestet, siehe 1.0.2
 
 Umsetzung des 1.1-Plans mit den Labor-Ergebnissen:
 - Bilder sind intern „Tinte“ 0–255 (`{ink,w,h}`). `Render.forPrint(img, hd)` macht daraus `{bits}` (Floyd–Steinberg, Schnell) oder `{lv}` 0–15 (Schön). Rahmen, Schrift, Schneidelinie immer schwarz. Comic und Umriss bleiben Schwarz-Weiß.
